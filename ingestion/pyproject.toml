@@ -1,0 +1,17 @@
+[project]
+name = "youtube-insights-ingestion"
+version = "0.1.0"
+description = "YouTube API pollers and Kafka Avro producers"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = []
+
+[tool.ruff.lint.isort]
+known-first-party = ["channel_discovery", "comment_poller", "viral_collector", "producers"]
