@@ -1,0 +1,59 @@
+{
+  "type": "record",
+  "name": "RawComment",
+  "namespace": "com.yourpipeline",
+  "doc": "A top-level comment fetched from the YouTube Data API. Published by comment_poller for each new comment on a tracked video.",
+  "fields": [
+    {
+      "name": "comment_id",
+      "type": "string",
+      "doc": "YouTube comment ID"
+    },
+    {
+      "name": "video_id",
+      "type": "string",
+      "doc": "YouTube video ID this comment belongs to"
+    },
+    {
+      "name": "channel_id",
+      "type": "string",
+      "doc": "YouTube channel ID the video belongs to"
+    },
+    {
+      "name": "author_channel_id",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Author's YouTube channel ID — null if the commenter has no public channel"
+    },
+    {
+      "name": "author_display_name",
+      "type": "string",
+      "doc": "Author's display name at time of fetch"
+    },
+    {
+      "name": "text",
+      "type": "string",
+      "doc": "Plain-text body of the comment"
+    },
+    {
+      "name": "like_count",
+      "type": "int",
+      "doc": "Number of likes the comment has received"
+    },
+    {
+      "name": "published_at",
+      "type": { "type": "long", "logicalType": "timestamp-millis" },
+      "doc": "UTC timestamp when the comment was originally posted"
+    },
+    {
+      "name": "updated_at",
+      "type": { "type": "long", "logicalType": "timestamp-millis" },
+      "doc": "UTC timestamp of the most recent edit to the comment"
+    },
+    {
+      "name": "polled_at",
+      "type": { "type": "long", "logicalType": "timestamp-millis" },
+      "doc": "UTC timestamp when comment_poller fetched this comment from the API"
+    }
+  ]
+}

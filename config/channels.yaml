@@ -1,0 +1,32 @@
+# Predefined list of YouTube channels to track for trend analysis.
+#
+# Each entry requires:
+#   id   — the YouTube channel ID (starts with UC, 24 characters)
+#   name — a human-readable label used in logs and Kafka messages
+#
+# Finding a channel ID:
+#   • Open the channel page on YouTube
+#   • Click "More" → "About" → share icon → "Copy channel ID"
+#   • Or extract it from the URL: youtube.com/channel/<CHANNEL_ID>
+#   • Helper tool: https://commentpicker.com/youtube-channel-id.php
+#
+# channel_discovery fetches the top MAX_VIDEOS_PER_CHANNEL videos (by view
+# count) published within the last VIDEO_LOOKBACK_DAYS days for each channel
+# listed here.  Add or remove entries freely — the pipeline adapts on the
+# next discovery run.
+
+channels:
+  - id: UCsBjURrPoezykLs9EqgamOA
+    name: Fireship
+#
+#  - id: UCXuqSBlHAE6Xw-yeJA0Tunw
+#    name: Linus Tech Tips
+#
+#  - id: UCBcRF18a7Qf58cCRy5xuWwQ
+#    name: Marques Brownlee (MKBHD)
+#
+#  - id: UC9x0AN7BWHpCDHSm9NiJFJQ
+#    name: NetworkChuck
+#
+#  - id: UCVhQ2NnY5Rskt6UjCUkJ_DA
+#    name: Tech With Tim

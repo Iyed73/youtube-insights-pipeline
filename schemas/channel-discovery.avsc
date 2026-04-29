@@ -1,0 +1,43 @@
+{
+  "type": "record",
+  "name": "DiscoveredVideo",
+  "namespace": "com.yourpipeline",
+  "doc": "A video newly selected for comment tracking. Published by channel_discovery when a video enters the top-N list for its channel.",
+  "fields": [
+    {
+      "name": "video_id",
+      "type": "string",
+      "doc": "YouTube video ID (11-character alphanumeric string)"
+    },
+    {
+      "name": "channel_id",
+      "type": "string",
+      "doc": "YouTube channel ID"
+    },
+    {
+      "name": "channel_name",
+      "type": "string",
+      "doc": "Human-readable channel name at time of discovery"
+    },
+    {
+      "name": "title",
+      "type": "string",
+      "doc": "Video title at time of discovery"
+    },
+    {
+      "name": "view_count",
+      "type": "long",
+      "doc": "View count at time of discovery — used for the top-N ranking"
+    },
+    {
+      "name": "published_at",
+      "type": { "type": "long", "logicalType": "timestamp-millis" },
+      "doc": "UTC timestamp when the video was published on YouTube"
+    },
+    {
+      "name": "discovered_at",
+      "type": { "type": "long", "logicalType": "timestamp-millis" },
+      "doc": "UTC timestamp when this pipeline first selected the video for tracking"
+    }
+  ]
+}
