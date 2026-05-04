@@ -44,6 +44,7 @@ services:
   #   PLAINTEXT://kafka:9092    used by Dockerised services (Flink, Schema Registry)
   #   EXTERNAL://localhost:9094 used when running ingestion directly on the host
   kafka:
+    container_name: kafka
     image: apache/kafka-native:3.9.0
     ports:
       - "9092:9092"
@@ -71,26 +72,23 @@ services:
       retries: 20
       start_period: 10s
 
-  # ── Schema Registry (Confluent) ───────────────────────────────────────────
-  # Official Confluent Schema Registry — the reference implementation.
-  # Exposes the standard REST API on :8081.
-  # Schemas are stored inside a Kafka topic (_schemas), so no extra storage.
+  # ── Schema Registry (Apicurio) ────────────────────────────────────────────
+  # Apicurio Registry — open-source, Confluent-API-compatible schema registry.
+  # Exposes its REST API on container port 8080, mapped to host port 8081.
+  # Schemas are stored inside a Kafka topic (kafkasql storage), so no extra DB.
   schema-registry:
-    image: confluentinc/cp-schema-registry:7.7.1
+    container_name: schema-registry
+    image: apicurio/apicurio-registry:latest
     depends_on:
       kafka:
         condition: service_healthy
     ports:
-      - "8081:8081"
+      - "8081:8080"
     environment:
-      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:9092
-      SCHEMA_REGISTRY_HOST_NAME: schema-registry
-      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
-      SCHEMA_REGISTRY_KAFKASTORE_TOPIC: _schemas
-      SCHEMA_REGISTRY_SCHEMA_COMPATIBILITY_LEVEL: FULL
-      SCHEMA_REGISTRY_LOG4J_ROOT_LOGLEVEL: WARN
+      APICURIO_STORAGE_KIND: kafkasql
+      APICURIO_KAFKASQL_BOOTSTRAP_SERVERS: kafka:9092
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8081/subjects"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/apis/ccompat/v7/subjects"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -100,6 +98,7 @@ services:
   # Browser-based UI to inspect Kafka topics, browse messages, manage consumer
   # groups, and view registered Avro schemas — essential for local debugging.
   kafka-ui:
+    container_name: kafka-ui
     image: ghcr.io/kafbat/kafka-ui:latest
     depends_on:
       - schema-registry
@@ -108,7 +107,7 @@ services:
     environment:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
-      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
+      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8080/apis/ccompat/v7
       KAFKA_CLUSTERS_0_DEFAULTKEYSERDE: String
       KAFKA_CLUSTERS_0_DEFAULTVALUESERDE: SchemaRegistry
 
@@ -117,6 +116,7 @@ services:
   # TaskManagers, and serves the Flink Web UI (real-time job monitoring).
   # Runs the sentiment-analysis streaming job against the raw-comments topic.
   flink-jobmanager:
+    container_name: flink-jobmanager
     image: flink:1.18-java11
     ports:
       - "8082:8081"   # Flink Web UI
@@ -136,6 +136,7 @@ services:
   # Flink worker: executes streaming operators (comment parsing, sentiment
   # scoring, windowed aggregations) and writes results to ClickHouse.
   flink-taskmanager:
+    container_name: flink-taskmanager
     image: flink:1.18-java11
     depends_on:
       flink-jobmanager:
@@ -151,6 +152,7 @@ services:
   # DAGs and distributes work to Spark Workers for batch aggregations
   # (per-channel totals, tracked-video counts, historical trend rollups).
   spark-master:
+    container_name: spark-master
     image: apache/spark:3.5.7
     ports:
       - "7077:7077"   # spark-submit endpoint
@@ -161,6 +163,7 @@ services:
   # Spark executor: processes PySpark tasks assigned by the master and writes
   # aggregated results to ClickHouse for dashboard consumption.
   spark-worker:
+    container_name: spark-worker
     image: apache/spark:3.5.7
     depends_on:
       - spark-master
@@ -179,6 +182,7 @@ services:
   #   2. ingestion DB — ingestion state (which videos are tracked per channel,
   #                     last-seen comment timestamp for the inactivity rule)
   postgres:
+    container_name: postgres
     image: postgres:16
     ports:
       - "5432:5432"
@@ -201,6 +205,7 @@ services:
   #   Batch view  : Spark writes scheduled aggregations (comment counts, etc.)
   # Powers any analytics dashboard or ad-hoc query layer on top of the pipeline.
   clickhouse:
+    container_name: clickhouse
     image: clickhouse/clickhouse-server:24.3
     ports:
       - "8123:8123"   # HTTP interface  (dashboards, curl, DBeaver)
@@ -222,6 +227,7 @@ services:
   # One-shot bootstrap container: runs DB migrations and creates the default
   # admin user on first start, then exits with code 0.
   airflow-init:
+    container_name: airflow-init
     <<: *airflow-common
     entrypoint: /bin/bash
     command:
@@ -242,6 +248,7 @@ services:
   # Handles ingestion scheduling (video-list refresh, comment polling) and
   # Spark batch job submission.
   airflow-webserver:
+    container_name: airflow-webserver
     <<: *airflow-common
     depends_on:
       postgres:
@@ -256,6 +263,7 @@ services:
   # Airflow brain: evaluates cron schedules and dispatches tasks via
   # LocalExecutor (no separate Celery workers needed for local development).
   airflow-scheduler:
+    container_name: airflow-scheduler
     <<: *airflow-common
     depends_on:
       postgres:
