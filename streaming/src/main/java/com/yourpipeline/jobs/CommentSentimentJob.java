@@ -47,8 +47,8 @@ public class CommentSentimentJob {
 
     private static final String INSERT_SQL =
         "INSERT INTO analytics.comments " +
-        "(comment_id, video_id, channel_id, author_display_name, author_channel_id, text, sentiment, published_at, processed_at) " +
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        "(comment_id, video_id, channel_id, channel_name, author_display_name, author_channel_id, text, sentiment, published_at, processed_at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
     public static void main(String[] args) throws Exception {
         String kafkaBootstrap    = env("KAFKA_BOOTSTRAP_SERVERS",  "kafka:9092");
@@ -58,6 +58,8 @@ public class CommentSentimentJob {
         String clickhousePass    = env("CLICKHOUSE_PASSWORD",       "admin");
         String modelDir          = env("MODEL_DIR",                 "/opt/flink/models/twitter-roberta-sentiment");
         int    parallelism       = Integer.parseInt(env("FLINK_PARALLELISM", "2"));
+
+        String channelsConfig = env("CHANNELS_CONFIG", "/opt/flink/config/channels.yaml");
 
         Schema readerSchema = new Schema.Parser().parse(RAW_COMMENT_SCHEMA);
 
@@ -81,7 +83,7 @@ public class CommentSentimentJob {
                 "raw-comments-source");
 
         DataStream<EnrichedComment> enrichedComments = comments
-                .map(new SentimentMapFunction(modelDir))
+                .map(new SentimentMapFunction(modelDir, channelsConfig))
                 .name("roberta-sentiment");
 
         enrichedComments.addSink(JdbcSink.sink(
@@ -90,12 +92,13 @@ public class CommentSentimentJob {
                     stmt.setString(1, r.getCommentId());
                     stmt.setString(2, r.getVideoId());
                     stmt.setString(3, r.getChannelId());
-                    stmt.setString(4, r.getAuthorDisplayName());
-                    stmt.setString(5, r.getAuthorChannelId());
-                    stmt.setString(6, r.getText());
-                    stmt.setString(7, r.getSentiment());
-                    stmt.setTimestamp(8, new Timestamp(r.getPublishedAt()));
-                    stmt.setTimestamp(9, new Timestamp(System.currentTimeMillis()));
+                    stmt.setString(4, r.getChannelName());
+                    stmt.setString(5, r.getAuthorDisplayName());
+                    stmt.setString(6, r.getAuthorChannelId());
+                    stmt.setString(7, r.getText());
+                    stmt.setString(8, r.getSentiment());
+                    stmt.setTimestamp(9, new Timestamp(r.getPublishedAt()));
+                    stmt.setTimestamp(10, new Timestamp(System.currentTimeMillis()));
                 },
                 JdbcExecutionOptions.builder()
                         .withBatchSize(200)

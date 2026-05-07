@@ -12,6 +12,7 @@ public class EnrichedComment implements Serializable {
     private String commentId;
     private String videoId;
     private String channelId;
+    private String channelName;
     private String authorDisplayName;
     /** Nullable — null if the commenter has no public YouTube channel */
     private String authorChannelId;
@@ -31,6 +32,9 @@ public class EnrichedComment implements Serializable {
 
     public String getChannelId()            { return channelId; }
     public void   setChannelId(String v)    { this.channelId = v; }
+
+    public String getChannelName()          { return channelName; }
+    public void   setChannelName(String v)  { this.channelName = v; }
 
     public String getAuthorDisplayName()           { return authorDisplayName; }
     public void   setAuthorDisplayName(String v)   { this.authorDisplayName = v; }
