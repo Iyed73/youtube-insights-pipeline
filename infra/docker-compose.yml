@@ -125,6 +125,8 @@ services:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
         rest.bind-address: 0.0.0.0
+    volumes:
+      - ../models:/opt/flink/models:ro   # ONNX model (exported via optimum-cli)
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/overview"]
       interval: 10s
@@ -146,6 +148,18 @@ services:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
         taskmanager.numberOfTaskSlots: 2
+        classloader.parent-first-patterns.additional: ai.djl;ai.onnxruntime
+      # Read by CommentSentimentJob at runtime
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SCHEMA_REGISTRY_URL: http://schema-registry:8080/apis/ccompat/v7
+      CLICKHOUSE_URL: jdbc:clickhouse://clickhouse:8123/analytics
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-admin}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-admin}
+      MODEL_DIR: /opt/flink/models/twitter-roberta-sentiment
+      FLINK_PARALLELISM: ${FLINK_PARALLELISM:-2}
+      OMP_NUM_THREADS: ${OMP_NUM_THREADS:-2}
+    volumes:
+      - ../models:/opt/flink/models:ro   # ONNX model (exported via optimum-cli)
 
   # ── Spark Master ──────────────────────────────────────────────────────────
   # Spark cluster coordinator: accepts PySpark job submissions from Airflow
@@ -210,8 +224,13 @@ services:
     ports:
       - "8123:8123"   # HTTP interface  (dashboards, curl, DBeaver)
       - "9000:9000"   # Native TCP      (Flink & Spark ClickHouse connectors)
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-admin}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-admin}
+      CLICKHOUSE_DB: analytics
     volumes:
       - clickhouse-data:/var/lib/clickhouse
+      - ./clickhouse/init.d:/docker-entrypoint-initdb.d:ro  # speed-view schema
     ulimits:
       nproc: 65535
       nofile:
