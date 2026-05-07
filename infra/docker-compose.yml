@@ -160,6 +160,7 @@ services:
       OMP_NUM_THREADS: ${OMP_NUM_THREADS:-2}
     volumes:
       - ../models:/opt/flink/models:ro   # ONNX model (exported via optimum-cli)
+      - ../config:/opt/flink/config:ro   # channels.yaml and other pipeline config
 
   # ── Spark Master ──────────────────────────────────────────────────────────
   # Spark cluster coordinator: accepts PySpark job submissions from Airflow
