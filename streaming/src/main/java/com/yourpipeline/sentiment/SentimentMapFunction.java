@@ -1,9 +1,12 @@
 package com.yourpipeline.sentiment;
 
 import com.yourpipeline.model.EnrichedComment;
+import com.codahale.metrics.SlidingWindowReservoir;
 import org.apache.avro.generic.GenericRecord;
 import org.apache.flink.api.common.functions.RichMapFunction;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.dropwizard.metrics.DropwizardHistogramWrapper;
+import org.apache.flink.metrics.Histogram;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -30,6 +33,8 @@ public class SentimentMapFunction extends RichMapFunction<GenericRecord, Enriche
     private final String channelsConfigPath;
     private transient RobertaSentimentAnalyzer analyzer;
     private transient Map<String, String> channelNames;
+    private transient Histogram inferenceTimeHistogram;
+    private transient Histogram kafkaToFlinkLatencyHistogram;
 
     public SentimentMapFunction(String modelDir, String channelsConfigPath) {
         this.modelDir = modelDir;
@@ -58,12 +63,26 @@ public class SentimentMapFunction extends RichMapFunction<GenericRecord, Enriche
             }
         }
         LOG.info("Loaded {} channel name(s) from {}", channelNames.size(), channelsConfigPath);
+
+        inferenceTimeHistogram = getRuntimeContext().getMetricGroup()
+                .histogram("inferenceTimeMs", new DropwizardHistogramWrapper(
+                        new com.codahale.metrics.Histogram(new SlidingWindowReservoir(1000))));
+
+        kafkaToFlinkLatencyHistogram = getRuntimeContext().getMetricGroup()
+                .histogram("kafkaToFlinkLatencyMs", new DropwizardHistogramWrapper(
+                        new com.codahale.metrics.Histogram(new SlidingWindowReservoir(1000))));
     }
 
     @Override
     public EnrichedComment map(GenericRecord record) throws Exception {
-        String text      = record.get("text").toString();
+        String text = record.get("text").toString();
+
+        long inferenceStart = System.currentTimeMillis();
         String sentiment = analyzer.analyze(text);
+        inferenceTimeHistogram.update(System.currentTimeMillis() - inferenceStart);
+
+        long polledAt = (Long) record.get("polled_at");
+        kafkaToFlinkLatencyHistogram.update(System.currentTimeMillis() - polledAt);
 
         EnrichedComment result = new EnrichedComment();
         result.setCommentId(record.get("comment_id").toString());
