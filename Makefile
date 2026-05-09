@@ -2,29 +2,39 @@
 ## YouTube Trend Analysis Pipeline — developer targets
 ##
 ## Prerequisites
-##   • Docker running with infra services started:
-##       docker compose -f infra/docker-compose.yml up -d kafka schema-registry postgres
+##   • Docker running with infra services started
 ##   • .env file present (copy from .env.example and fill in YOUTUBE_API_KEY)
-##   • Python 3.11+
+##   • Python 3.11–3.13  (ingestion + model export)
+##   • Java 11+ and Maven (streaming)
 ##
-## Quick start
+## Quick start — ingestion
 ##   make install          # create venv + install ingestion package
 ##   make migrate          # create tracked_videos table in Postgres
 ##   make register-schemas # push Avro schemas to Schema Registry
 ##   make discover         # run channel discovery once
 ##   make poll             # run comment poller once
+##
+## Quick start — streaming
+##   make export-model     # download + export RoBERTa to ONNX (one-time, needs Python ≤ 3.13)
+##   make build-streaming  # compile Flink fat JAR
+##   make submit-job       # copy JAR into Flink container and submit the job
+##   make stop-job         # cancel the running sentiment job
 ## ─────────────────────────────────────────────────────────────────────────────
 
-SHELL      := /bin/bash
-ENV_FILE   ?= .env
-VENV       := ingestion/.venv
-PY         := $(VENV)/bin/python3
-PIP        := $(VENV)/bin/pip
-SRC        := ingestion/src
+SHELL        := /bin/bash
+ENV_FILE     ?= .env
+VENV         := ingestion/.venv
+PY           := $(VENV)/bin/python3
+PIP          := $(VENV)/bin/pip
+SRC          := ingestion/src
+
+STREAMING_JAR := streaming/target/streaming-0.1.0.jar
+MODEL_DIR     := models/twitter-roberta-sentiment
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install migrate register-schemas discover poll
+.PHONY: help install migrate register-schemas discover poll \
+        export-model build-streaming submit-job stop-job
 
 help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -72,3 +82,38 @@ discover: ## Run channel_discovery once: fetch top videos per channel → Kafka
 poll: ## Run comment_poller once: fetch new comments per active video → Kafka
 	@set -a && . $(ENV_FILE) && set +a && \
 	PYTHONPATH=$(SRC) $(PY) -m comment_poller.main
+
+# ── Streaming (Flink + RoBERTa) ───────────────────────────────────────────────
+
+export-model: ## Export RoBERTa to ONNX (one-time, requires Python ≤ 3.13)
+	@echo "Installing optimum + transformers..."
+	pip install --quiet "optimum[onnxruntime]" transformers
+	optimum-cli export onnx \
+		--model cardiffnlp/twitter-roberta-base-sentiment \
+		$(MODEL_DIR)/
+	@echo "✓ Model exported to $(MODEL_DIR)/"
+
+build-streaming: ## Compile the Flink streaming fat JAR
+	cd streaming && mvn clean package -DskipTests -q
+	@echo "✓ JAR built at $(STREAMING_JAR)"
+
+submit-job: ## Copy the JAR into Flink and submit the sentiment job
+	@if [ ! -f $(STREAMING_JAR) ]; then \
+		echo "ERROR: $(STREAMING_JAR) not found — run 'make build-streaming' first"; \
+		exit 1; \
+	fi
+	docker cp $(STREAMING_JAR) flink-jobmanager:/tmp/streaming.jar
+	docker exec flink-jobmanager \
+		flink run --jobmanager flink-jobmanager:8081 /tmp/streaming.jar
+	@echo "✓ Job submitted — monitor at http://localhost:8082"
+
+stop-job: ## Cancel the running sentiment Flink job
+	@JOB_ID=$$(docker exec flink-jobmanager flink list 2>/dev/null \
+		| grep 'YouTube Comment Sentiment' \
+		| awk '{print $$4}'); \
+	if [ -z "$$JOB_ID" ]; then \
+		echo "No running sentiment job found."; \
+	else \
+		docker exec flink-jobmanager flink cancel $$JOB_ID && \
+		echo "✓ Cancelled job $$JOB_ID"; \
+	fi

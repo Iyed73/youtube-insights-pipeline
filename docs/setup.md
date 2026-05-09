@@ -12,6 +12,7 @@
 | `orchestration/` | Python (Airflow) | DAGs and plugins for pipeline scheduling |
 | `infra/` | Docker Compose | All infrastructure services (Kafka, Postgres, Flink, Spark, ClickHouse, Airflow) |
 | `schemas/` | Avro | Kafka topic schemas (`channel-discovery`, `raw-comments`). Avro is a compact binary serialization format with a schema — it enforces message structure and keeps Kafka payloads small. |
+| `models/` | ONNX | Exported ML models used by the Flink streaming job (not committed — generated locally via `optimum-cli`) |
 | `config/` | YAML | Channel list and pipeline settings |
 | `scripts/` | Python | Utility scripts (e.g. Avro schema registration) |
 | `shared/` | — | Shared models (reserved for future cross-project types) |
@@ -24,7 +25,8 @@
 ### 1. Prerequisites
 
 - Docker running
-- Python 3.11+
+- Python 3.11–3.13 (3.14 cannot build the `tokenizers` wheel needed for ONNX model export)
+- Java 11+ and Maven 3.8+
 - `.env` file at the repo root (copy from `.env.example` and fill in `YOUTUBE_API_KEY`)
 
 ```bash
@@ -38,7 +40,8 @@ cp .env.example .env
 make install
 ```
 
-> Only `ingestion/` is ready. `batch/` and `orchestration/` are not yet functional.
+> `ingestion/` and `streaming/` are ready. `batch/` and `orchestration/` are not yet functional.
+> Run `make help` to see all available targets.
 
 ### 3. Start infrastructure
 
@@ -70,9 +73,53 @@ make create-topics
 make register-schemas
 ```
 
+### 7. Export the RoBERTa ONNX model (one-time)
+
+Required for the Flink sentiment job. Must be run with Python 3.11–3.13.
+
+```bash
+make export-model
+```
+
+Produces `models/twitter-roberta-sentiment/model.onnx` and `tokenizer.json`. These files are gitignored.
+
+### 8. Build the Flink streaming JAR
+
+```bash
+make build-streaming
+```
+
+Output: `streaming/target/streaming-0.1.0.jar`
+
+### 9. Submit the Flink job
+
+```bash
+make submit-job
+```
+
+Monitor at **http://localhost:8082** (Flink Web UI).
+
 ---
 
 ## Running the Pipeline
+
+### Sentiment streaming job
+
+Consumes `raw-comments` from Kafka, runs RoBERTa sentiment analysis, and writes results to the `comments` table in ClickHouse. Submit once — Flink keeps it running continuously.
+
+```bash
+# Flink Web UI: http://localhost:8082
+# ClickHouse query example (satisfaction per channel, last hour):
+docker exec -it clickhouse clickhouse-client --user admin --password admin --query "
+SELECT
+    channel_id,
+    round(countIf(sentiment = 'Positive') / count() * 100, 1) AS satisfaction_pct,
+    count() AS total_comments
+FROM comments
+WHERE processed_at >= now() - INTERVAL 1 HOUR
+GROUP BY channel_id
+ORDER BY satisfaction_pct DESC;"
+```
 
 ### Channel discovery
 

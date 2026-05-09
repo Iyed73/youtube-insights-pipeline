@@ -22,9 +22,22 @@
 
         <flink.version>1.18.1</flink.version>
         <kafka.connector.version>3.1.0-1.18</kafka.connector.version>
+        <jdbc.connector.version>3.1.2-1.18</jdbc.connector.version>
         <slf4j.version>2.0.12</slf4j.version>
         <log4j.version>2.23.1</log4j.version>
+        <djl.version>0.30.0</djl.version>
+        <onnxruntime.version>1.19.2</onnxruntime.version>
+        <clickhouse.jdbc.version>0.6.3</clickhouse.jdbc.version>
+        <avro.version>1.11.3</avro.version>
     </properties>
+
+    <repositories>
+        <!-- Required for io.confluent:kafka-schema-registry-client (transitive dep of flink-avro-confluent-registry) -->
+        <repository>
+            <id>confluent</id>
+            <url>https://packages.confluent.io/maven/</url>
+        </repository>
+    </repositories>
 
     <dependencies>
 
@@ -64,6 +77,78 @@
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-avro-confluent-registry</artifactId>
+            <version>${flink.version}</version>
+        </dependency>
+
+        <!-- ================================================================
+             Flink JDBC connector (ClickHouse sink)
+             ================================================================ -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-connector-jdbc</artifactId>
+            <version>${jdbc.connector.version}</version>
+        </dependency>
+
+        <!-- ================================================================
+             Apache Avro (Schema.Parser used in the job entry point)
+             ================================================================ -->
+        <dependency>
+            <groupId>org.apache.avro</groupId>
+            <artifactId>avro</artifactId>
+            <version>${avro.version}</version>
+        </dependency>
+
+        <!-- ================================================================
+             ClickHouse JDBC driver — all-in-one shaded jar
+             ================================================================ -->
+        <dependency>
+            <groupId>com.clickhouse</groupId>
+            <artifactId>clickhouse-jdbc</artifactId>
+            <version>${clickhouse.jdbc.version}</version>
+            <classifier>all</classifier>
+            <exclusions>
+                <!-- transitive deps are already bundled inside the shaded jar -->
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!-- ================================================================
+             DJL — HuggingFace Rust tokenizer + ONNX Runtime engine
+             ================================================================ -->
+        <dependency>
+            <groupId>ai.djl</groupId>
+            <artifactId>api</artifactId>
+            <version>${djl.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>ai.djl.huggingface</groupId>
+            <artifactId>tokenizers</artifactId>
+            <version>${djl.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>ai.djl.onnxruntime</groupId>
+            <artifactId>onnxruntime-engine</artifactId>
+            <version>${djl.version}</version>
+        </dependency>
+
+        <!-- Microsoft ONNX Runtime Java API + native binaries -->
+        <dependency>
+            <groupId>com.microsoft.onnxruntime</groupId>
+            <artifactId>onnxruntime</artifactId>
+            <version>${onnxruntime.version}</version>
+        </dependency>
+
+        <!-- ================================================================
+             Flink metrics — Dropwizard Histogram (mean, p50, p99 …)
+             ================================================================ -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-metrics-dropwizard</artifactId>
             <version>${flink.version}</version>
         </dependency>
 
@@ -130,7 +215,7 @@
                             </filters>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>com.yourpipeline.jobs.StreamingJob</mainClass>
+                                    <mainClass>com.yourpipeline.jobs.CommentSentimentJob</mainClass>
                                 </transformer>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
