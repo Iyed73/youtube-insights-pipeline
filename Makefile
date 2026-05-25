@@ -34,7 +34,8 @@ MODEL_DIR     := models/twitter-roberta-sentiment
 .DEFAULT_GOAL := help
 
 .PHONY: help install migrate register-schemas discover poll \
-        export-model build-streaming submit-job stop-job
+        export-model build-streaming submit-job stop-job \
+        download-videos
 
 help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -82,6 +83,10 @@ discover: ## Run channel_discovery once: fetch top videos per channel → Kafka
 poll: ## Run comment_poller once: fetch new comments per active video → Kafka
 	@set -a && . $(ENV_FILE) && set +a && \
 	PYTHONPATH=$(SRC) $(PY) -m comment_poller.main
+
+download-videos: ## Download top-satisfaction videos to MinIO (last DOWNLOAD_LOOKBACK_DAYS days)
+	@set -a && . $(ENV_FILE) && set +a && \
+	PYTHONPATH=$(SRC) $(PY) -m video_downloader.main
 
 # ── Streaming (Flink + RoBERTa) ───────────────────────────────────────────────
 

@@ -15,7 +15,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from models import TrackedVideo
+from models import DownloadedVideo, TrackedVideo
 
 _engine: Engine | None = None
 
@@ -148,4 +148,55 @@ def mark_video_removed(session: Session, video_id: str) -> None:
         .where(TrackedVideo.video_id == video_id)
         .values(status="removed")
     )
+    session.commit()
+
+
+# ---------------------------------------------------------------------------
+# video_downloader helpers
+# ---------------------------------------------------------------------------
+
+
+def is_video_downloaded(session: Session, video_id: str) -> bool:
+    """Return True if *video_id* has already been successfully downloaded."""
+    row = session.execute(
+        select(DownloadedVideo)
+        .where(DownloadedVideo.video_id == video_id, DownloadedVideo.status == "completed")
+    ).scalar_one_or_none()
+    return row is not None
+
+
+def upsert_downloaded_video(
+    session: Session,
+    *,
+    video_id: str,
+    channel_id: str,
+    title: str,
+    minio_path: str,
+    satisfaction_pct: float,
+    status: str,
+    error: str | None = None,
+) -> None:
+    """Insert or update a row in downloaded_videos."""
+    stmt = (
+        pg_insert(DownloadedVideo)
+        .values(
+            video_id=video_id,
+            channel_id=channel_id,
+            title=title,
+            minio_path=minio_path,
+            satisfaction_pct=satisfaction_pct,
+            status=status,
+            error=error,
+        )
+        .on_conflict_do_update(
+            index_elements=["video_id"],
+            set_={
+                "minio_path": minio_path,
+                "satisfaction_pct": satisfaction_pct,
+                "status": status,
+                "error": error,
+            },
+        )
+    )
+    session.execute(stmt)
     session.commit()

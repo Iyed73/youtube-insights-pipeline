@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime
 from dataclasses import dataclass
 
-from sqlalchemy import BigInteger, CheckConstraint, Index, String, Text, func, text
+from sqlalchemy import BigInteger, CheckConstraint, Float, Index, String, Text, func, text
 from sqlalchemy.dialects.postgresql import TIMESTAMP as PgTIMESTAMP
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -81,3 +81,25 @@ class TrackedVideo(Base):
     # poll so we only fetch comments published after this timestamp.
     comment_cursor: Mapped[datetime.datetime | None] = mapped_column(PgTIMESTAMP(timezone=True))
     status: Mapped[str] = mapped_column(String(10), nullable=False, default="active")
+
+
+class DownloadedVideo(Base):
+    """ORM model for the downloaded_videos Postgres table."""
+
+    __tablename__ = "downloaded_videos"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('completed', 'failed')", name="downloaded_videos_status_check"
+        ),
+    )
+
+    video_id: Mapped[str] = mapped_column(String(20), primary_key=True)
+    channel_id: Mapped[str] = mapped_column(String(30), nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    minio_path: Mapped[str] = mapped_column(Text, nullable=False)
+    satisfaction_pct: Mapped[float] = mapped_column(Float, nullable=False)
+    downloaded_at: Mapped[datetime.datetime] = mapped_column(
+        PgTIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    status: Mapped[str] = mapped_column(String(10), nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)

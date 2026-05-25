@@ -11,6 +11,8 @@
 #   8085  Airflow Web UI
 #   8123  ClickHouse HTTP
 #   9000  ClickHouse Native TCP
+#   9001  MinIO Web Console
+#   9002  MinIO S3 API
 #   9092  Kafka (internal — for Dockerised services)
 #   9094  Kafka (external — for services running directly on the host)
 #   5432  PostgreSQL
@@ -292,7 +294,31 @@ services:
         condition: service_completed_successfully
     command: scheduler
 
+  # ── MinIO ─────────────────────────────────────────────────────────────────
+  # S3-compatible object store used as the landing zone for downloaded videos.
+  # Spark batch jobs read video files directly from MinIO via the S3A connector.
+  # S3 API is mapped to host port 9002 (9000 is taken by ClickHouse native TCP).
+  minio:
+    container_name: minio
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9002:9000"   # S3 API (use localhost:9002 from host, minio:9000 inside Docker)
+      - "9001:9001"   # MinIO Web Console
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
 volumes:
   postgres-data:     # Airflow metadata + ingestion tracking state
   clickhouse-data:   # Speed-view sentiment scores + batch aggregation results
   airflow-logs:      # Airflow task execution logs
+  minio-data:        # Downloaded video files for Spark batch processing
