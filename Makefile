@@ -92,8 +92,8 @@ download-videos: ## Download top-satisfaction videos to MinIO (last DOWNLOAD_LOO
 
 export-model: ## Export RoBERTa to ONNX (one-time, requires Python ≤ 3.13)
 	@echo "Installing optimum + transformers..."
-	pip install --quiet "optimum[onnxruntime]" transformers
-	optimum-cli export onnx \
+	$(PIP) install --quiet "optimum[onnxruntime]" transformers
+	$(VENV)/bin/optimum-cli export onnx \
 		--model cardiffnlp/twitter-roberta-base-sentiment \
 		$(MODEL_DIR)/
 	@echo "✓ Model exported to $(MODEL_DIR)/"
