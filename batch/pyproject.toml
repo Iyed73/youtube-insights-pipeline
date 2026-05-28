@@ -1,17 +1,47 @@
+[build-system]
+requires      = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "youtube-insights-batch"
-version = "0.1.0"
-description = "PySpark batch jobs for deep multi-modal video analysis"
-requires-python = ">=3.11"
-dependencies = []
+name            = "youtube-batch-pipeline"
+version         = "0.1.0"
+description     = "PySpark batch layer for the YouTube Trend Analysis Pipeline"
+requires-python = ">=3.10"
 
-[tool.ruff]
-line-length = 100
-target-version = "py311"
+dependencies = [
+    # Config & environment
+    "python-dotenv>=1.0.1",
 
-[tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
-ignore = []
+    # PostgreSQL — driver-side (watermark, psycopg2 direct calls)
+    "psycopg2-binary>=2.9.9",
 
-[tool.ruff.lint.isort]
-known-first-party = ["jobs", "utils"]
+    # MinIO / S3 — driver-side download for Whisper
+    "boto3>=1.34",
+    "botocore>=1.34",
+
+    # Speech-to-text
+    # NOTE: requires the `ffmpeg` binary on the OS path.
+    #   Ubuntu/Debian:  sudo apt-get install ffmpeg
+    #   macOS:          brew install ffmpeg
+    "openai-whisper>=20231117",
+    "ffmpeg-python>=0.2.0",
+
+    # Alembic (migrations are run from ingestion/, but listed here for
+    # developer convenience when working in this sub-package)
+    "alembic>=1.13",
+    "SQLAlchemy>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-spark>=0.6",
+]
+
+[tool.setuptools.packages.find]
+# Tells setuptools that importable packages live under src/
+where = ["src"]
+
+[tool.setuptools.package-dir]
+# Makes `import batch_pipeline` resolve to src/
+"" = "src"
