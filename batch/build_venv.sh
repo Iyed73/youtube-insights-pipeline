@@ -2,6 +2,7 @@
 set -e
 echo "Building venv for Spark inside container..."
 apt-get update && apt-get install -y python3-venv libgl1-mesa-glx libglib2.0-0
+pip3 install sqlalchemy psycopg2-binary
 python3 -m venv /tmp/.venv_spark
 source /tmp/.venv_spark/bin/activate
 pip install --upgrade pip

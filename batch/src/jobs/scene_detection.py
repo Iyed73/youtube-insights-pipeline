@@ -75,6 +75,11 @@ class Config:
     results_bucket: str
     scene_threshold: float   # AdaptiveDetector threshold (0–100), default 3.0
     downscale_factor: int    # Phase 6.2: frame downscale passed to SceneManager
+    postgres_host: str
+    postgres_port: int
+    postgres_user: str
+    postgres_password: str
+    ingestion_db: str
 
 
 def _cfg() -> Config:
@@ -91,7 +96,66 @@ def _cfg() -> Config:
         # Phase 6.2: default factor of 4 shrinks a 1280×720 frame to 320×180,
         # keeping each OpenCV matrix ~16× smaller in RAM.
         downscale_factor=int(os.environ.get("DOWNSCALE_FACTOR", "4")),
+        postgres_host=os.environ.get("POSTGRES_HOST", "postgres"),
+        postgres_port=int(os.environ.get("POSTGRES_PORT", "5432")),
+        postgres_user=os.environ.get("POSTGRES_USER", "airflow"),
+        postgres_password=os.environ.get("POSTGRES_PASSWORD", "airflow"),
+        ingestion_db=os.environ.get("INGESTION_DB", "ingestion"),
     )
+
+
+def fetch_unprocessed_videos_from_db(cfg: Config) -> list[tuple[str, str, str]]:
+    """
+    Query Postgres downloaded_videos table for completed downloads that
+    have not yet been processed for cuts.
+    Returns a list of (channel_id, video_id, minio_path) tuples.
+    """
+    import psycopg2
+    conn = psycopg2.connect(
+        host=cfg.postgres_host,
+        port=cfg.postgres_port,
+        user=cfg.postgres_user,
+        password=cfg.postgres_password,
+        database=cfg.ingestion_db,
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT channel_id, video_id, minio_path FROM downloaded_videos "
+                "WHERE status = 'completed' AND processed_for_cuts = FALSE"
+            )
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def mark_videos_processed_in_db(cfg: Config, video_ids: list[str], results_path: str) -> None:
+    """
+    Update Postgres downloaded_videos table to set processed_for_cuts = TRUE
+    and save the cuts_processing_results path for the successfully processed video IDs.
+    """
+    if not video_ids:
+        return
+    import psycopg2
+    conn = psycopg2.connect(
+        host=cfg.postgres_host,
+        port=cfg.postgres_port,
+        user=cfg.postgres_user,
+        password=cfg.postgres_password,
+        database=cfg.ingestion_db,
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE downloaded_videos SET processed_for_cuts = TRUE, "
+                "cuts_processing_results = %s "
+                "WHERE video_id = ANY(%s)",
+                (results_path, list(video_ids))
+            )
+        conn.commit()
+        print(f"[Bronze] Marked {len(video_ids)} video(s) as processed_for_cuts and saved results path '{results_path}' in Postgres.")
+    finally:
+        conn.close()
 
 
 # ── Worker logic (runs on each Spark executor) ────────────────────────────────
@@ -238,8 +302,16 @@ def main() -> None:
 
     spark.sparkContext.setLogLevel("WARN")
 
-    # ── Phase 3.1: Read the Bronze Layer — enumerate the data lake ────────────
-    print(f"[Bronze] Scanning MinIO bucket '{cfg.videos_bucket}' for video catalog...")
+    # ── Phase 3.1: Read the Bronze Layer — query PostgreSQL for unprocessed videos ────────────
+    print(f"[Bronze] Querying PostgreSQL for unprocessed videos...")
+    try:
+        db_records = fetch_unprocessed_videos_from_db(cfg)
+        print(f"[Bronze] Found {len(db_records)} unprocessed video(s) in Postgres.")
+    except Exception as e:
+        print(f"[Bronze] Error: Failed to query PostgreSQL: {e}")
+        spark.stop()
+        return
+
     from minio import Minio
     driver_minio = Minio(
         cfg.minio_endpoint,
@@ -253,16 +325,11 @@ def main() -> None:
         print(f"[Bronze] Created results bucket '{cfg.results_bucket}'")
 
     raw_records = []
-    for obj in driver_minio.list_objects(cfg.videos_bucket, recursive=True):
-        if not obj.object_name.endswith(".mp4"):
-            continue
-        parts      = obj.object_name.split("/", 1)
-        channel_id = parts[0] if len(parts) == 2 else "unknown"
-        video_id   = parts[1].replace(".mp4", "") if len(parts) == 2 else obj.object_name
-        raw_records.append((channel_id, video_id, obj.object_name))
+    for channel_id, video_id, minio_path in db_records:
+        raw_records.append((channel_id, video_id, minio_path))
 
     if not raw_records:
-        print("[Bronze] No videos found in data lake — nothing to process.")
+        print("[Bronze] No new/unprocessed videos found in database — nothing to process.")
         spark.stop()
         return
 
@@ -321,13 +388,25 @@ def main() -> None:
     local_out = "/opt/spark/batch/tmp/scene_metrics"
     os.makedirs(local_out, exist_ok=True)
     results_df.write.mode("overwrite").parquet(local_out)
-    results_df.unpersist()  # release executor memory once written
 
     for parquet_file in glob.glob(f"{local_out}/*.parquet"):
         object_name = f"scene_metrics/{os.path.basename(parquet_file)}"
         driver_minio.fput_object(cfg.results_bucket, object_name, parquet_file)
         print(f"  -> Uploaded {object_name} to bucket '{cfg.results_bucket}'")
 
+    # ── Phase 9.4: Update PostgreSQL state ───────────────────────────────────
+    # Identify successfully processed video IDs (status == "ok")
+    success_rows = results_df.filter(results_df.status == "ok").select("video_id").collect()
+    success_video_ids = [row.video_id for row in success_rows]
+
+    if success_video_ids:
+        print(f"[Bronze] Marking {len(success_video_ids)} video(s) as processed for cuts in Postgres...")
+        try:
+            mark_videos_processed_in_db(cfg, success_video_ids, "scene_metrics/")
+        except Exception as e:
+            print(f"[Bronze] Warning: Failed to update database state: {e}")
+
+    results_df.unpersist()  # release executor memory once written
     print("\n[Done] Scene detection batch job complete.")
     spark.stop()
 

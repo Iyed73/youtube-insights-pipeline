@@ -131,7 +131,12 @@ submit-silver: ## Submit the PySceneDetect batch job to Spark Master
 	@# batch/ is bind-mounted as /opt/spark/batch in all Spark containers.
 	@mkdir -p batch/tmp && chmod 777 batch/tmp
 	@echo "Submitting scene detection job to Spark cluster..."
-	docker exec spark-master /opt/spark/bin/spark-submit \
+	@set -a && . $(ENV_FILE) && set +a && \
+	docker exec \
+		-e POSTGRES_USER=$$POSTGRES_USER \
+		-e POSTGRES_PASSWORD=$$POSTGRES_PASSWORD \
+		-e INGESTION_DB=$$INGESTION_DB \
+		spark-master /opt/spark/bin/spark-submit \
 		--master spark://spark-master:7077 \
 		--conf spark.pyspark.driver.python=python3 \
 		--conf spark.pyspark.python=./environment/bin/python \

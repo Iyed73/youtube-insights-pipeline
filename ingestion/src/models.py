@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime
 from dataclasses import dataclass
 
-from sqlalchemy import BigInteger, CheckConstraint, Float, Index, String, Text, func, text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Float, Index, String, Text, func, text
 from sqlalchemy.dialects.postgresql import TIMESTAMP as PgTIMESTAMP
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -103,3 +103,7 @@ class DownloadedVideo(Base):
     )
     status: Mapped[str] = mapped_column(String(10), nullable=False)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    processed_for_cuts: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    cuts_processing_results: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -165,6 +165,29 @@ def is_video_downloaded(session: Session, video_id: str) -> bool:
     return row is not None
 
 
+def get_unprocessed_downloaded_videos(session: Session) -> list[DownloadedVideo]:
+    """Return all successfully downloaded videos that have not been processed in the silver layer."""
+    return list(
+        session.execute(
+            select(DownloadedVideo)
+            .where(
+                DownloadedVideo.status == "completed",
+                DownloadedVideo.processed_for_cuts == False,
+            )
+        ).scalars()
+    )
+
+
+def mark_video_processed_for_cuts(session: Session, video_id: str) -> None:
+    """Mark *video_id* as processed for cuts."""
+    session.execute(
+        update(DownloadedVideo)
+        .where(DownloadedVideo.video_id == video_id)
+        .values(processed_for_cuts=True)
+    )
+    session.commit()
+
+
 def upsert_downloaded_video(
     session: Session,
     *,
