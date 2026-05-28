@@ -210,3 +210,137 @@ channels:
 - Helper tool: https://commentpicker.com/youtube-channel-id.php
 
 The pipeline picks up changes on the next `make discover` run — no restart needed.
+
+---
+
+## Batch Processing Pipeline
+
+The batch processing pipeline uses **Apache Spark** to run parallel, heavy-duty processing of videos and comments. It consists of two layers:
+1. **Silver Layer (Scene Detection)**: Extracts visual features from raw MP4 video files stored in MinIO.
+2. **Gold Layer (Sentiment Correlation)**: Joins the visual features with aggregated audience sentiment data from ClickHouse, producing correlates (e.g., editing pace vs. audience satisfaction).
+
+This guide walks you through setting up and running the batch pipeline from scratch.
+
+### Step 1: Pre-requisites & Infrastructure Setup
+
+Ensure the infrastructure stack is fully running. If not, spin it up using Docker:
+
+```bash
+# Start all containers (Kafka, ClickHouse, MinIO, Postgres, Flink, Spark)
+docker compose -f infra/docker-compose.yml up -d
+```
+
+Confirm that the Spark cluster is healthy:
+- **Spark Master UI**: [http://localhost:8083](http://localhost:8083) (should show 2 registered workers: `spark-worker` and `spark-worker-2`).
+
+#### Environment Configuration
+
+Make sure your `.env` file contains the following **Spark Batching** configuration variables. You can adjust them as needed:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NUM_WORKERS` | `2` | Number of Spark worker nodes in the cluster. |
+| `CORES_PER_WORKER` | `2` | Number of CPU cores allocated per Spark worker. |
+| `MINIO_RESULTS_BUCKET` | `analytics` | Bucket name for storing Silver and Gold results. |
+| `SCENE_THRESHOLD` | `3.0` | Sensitivity threshold for PySceneDetect `AdaptiveDetector` (lower = more sensitive). |
+| `DOWNSCALE_FACTOR` | `4` | Image downscaling factor for scene detection to reduce worker memory usage (e.g. `4` downscales 720p to 180p). |
+
+### Step 2: Build the Spark Executor Virtual Environment (One-time)
+
+To ensure that PySceneDetect, OpenCV, PyAV, and MinIO packages are available on Spark workers without pre-installing them on the host or the base Docker image, we pack a virtual environment using `venv-pack` and distribute it to workers.
+
+If `batch/environment.tar.gz` is not present, or if you update dependencies, build it by running:
+
+```bash
+docker exec -it spark-master /opt/spark/batch/build_venv.sh
+```
+
+This script:
+1. Installs system libraries (FFmpeg/OpenCV dependencies) on the container.
+2. Creates a virtual environment.
+3. Installs `minio`, `scenedetect`, `av`, `numpy`, `venv-pack`, and `clickhouse-connect`.
+4. Packs it into `batch/environment.tar.gz` which is shared across workers via a Docker volume mount.
+
+### Step 3: Populate Raw Videos (Bronze Layer)
+
+The Silver layer analyzes videos that are downloaded into the MinIO `videos` bucket.
+
+1. Ensure channels are configured in `config/channels.yaml`.
+2. Discover channels and poll comments (so ClickHouse has sentiment data):
+   ```bash
+   make discover
+   make poll
+   ```
+3. Run the streaming job to process comments and populate the ClickHouse database:
+   ```bash
+   make submit-job
+   ```
+4. Download the videos to MinIO:
+   ```bash
+   make download-videos
+   ```
+   *Verify that the videos are downloaded by visiting the MinIO Web Console at [http://localhost:9001](http://localhost:9001) (login: `minioadmin` / `minioadmin`) inside the `videos` bucket.*
+
+### Step 4: Run the Silver Layer Job (Scene Detection)
+
+This job performs distributed scene cutting and video metric analysis.
+
+Run the job using:
+```bash
+make submit-silver
+```
+
+**What happens under the hood:**
+1. The driver scans the `videos` bucket in MinIO.
+2. It distributes the list of videos to executors (`spark-worker` and `spark-worker-2`) across partitions.
+3. Each worker downloads its allocated video locally, opens it via **PyAV**, and runs **PySceneDetect** (using the `AdaptiveDetector` algorithm).
+4. The workers extract:
+   - `cuts`: Total scene transitions.
+   - `duration_sec`: Total runtime.
+   - `asl_sec`: Average Shot Length (Duration / Cuts).
+   - `cut_density`: Count of cuts per 60-second window (array).
+   - `avg_brightness`: Average grayscale value of frame samples.
+5. The dataframe is cached on the cluster, and written to the shared directory `/opt/spark/batch/tmp/scene_metrics/` (which maps to `batch/tmp/scene_metrics/` on the host).
+6. The driver uploads the resulting Parquet files to the MinIO `analytics` bucket under `scene_metrics/`.
+
+### Step 5: Run the Gold Layer Job (Sentiment Correlation)
+
+The Gold job joins the visual metrics from the Silver layer with the comment sentiment aggregates stored in ClickHouse.
+
+Run the job using:
+```bash
+make submit-gold
+```
+
+**What happens under the hood:**
+1. The driver downloads the Silver Parquet files from MinIO to the shared staging directory `/opt/spark/batch/tmp/silver/`.
+2. It reads them into a Spark DataFrame and caches them.
+3. It fetches comment sentiment aggregates from ClickHouse (`analytics.comments`):
+   - Total comment count.
+   - Positive/Neutral/Negative sentiment frequencies.
+4. Spark performs a `left join` on `video_id` (so videos without comments are still preserved with NULL sentiment fields).
+5. It computes derived columns:
+   - Sentiment ratios and normalized `sentiment_score` (`(positive - negative) / total`).
+   - `editing_pace`: `'fast'` (<3s average shot length), `'medium'` (3–8s), or `'slow'` (>8s).
+   - `pace_sentiment_label`: Combines the editing pace and sentiment score to show how users react (e.g., `fast_positive`).
+6. Writes the final results to MinIO under `analytics/gold/` as Parquet.
+7. Creates the database `gold` and table `gold.video_insights` in ClickHouse (if they do not exist) and inserts the rows.
+
+### Step 6: Verify Gold Insights in ClickHouse
+
+Query the final Gold metrics in ClickHouse to see the correlations:
+
+```bash
+docker exec -it clickhouse clickhouse-client --user admin --password admin --query "
+SELECT 
+    video_id,
+    cuts,
+    asl_sec,
+    editing_pace,
+    total_comments,
+    sentiment_score,
+    pace_sentiment_label
+FROM gold.video_insights
+LIMIT 10;
+"
+```

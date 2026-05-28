@@ -4,7 +4,7 @@
 ## Prerequisites
 ##   • Docker running with infra services started
 ##   • .env file present (copy from .env.example and fill in YOUTUBE_API_KEY)
-##   • Python 3.11–3.13  (ingestion + model export)
+##   • Python 3.11–3.12  (ingestion + model export)
 ##   • Java 11+ and Maven (streaming)
 ##
 ## Quick start — ingestion
@@ -15,7 +15,7 @@
 ##   make poll             # run comment poller once
 ##
 ## Quick start — streaming
-##   make export-model     # download + export RoBERTa to ONNX (one-time, needs Python ≤ 3.13)
+##   make export-model     # download + export RoBERTa to ONNX (one-time, needs Python ≤ 3.12)
 ##   make build-streaming  # compile Flink fat JAR
 ##   make submit-job       # copy JAR into Flink container and submit the job
 ##   make stop-job         # cancel the running sentiment job
@@ -90,16 +90,14 @@ download-videos: ## Download top-satisfaction videos to MinIO (last DOWNLOAD_LOO
 
 # ── Streaming (Flink + RoBERTa) ───────────────────────────────────────────────
 
-export-model: ## Export RoBERTa to ONNX (one-time, requires Python ≤ 3.13)
-	@echo "Installing optimum + transformers..."
-	$(PIP) install --quiet "optimum[onnxruntime]" transformers
-	$(VENV)/bin/optimum-cli export onnx \
-		--model cardiffnlp/twitter-roberta-base-sentiment \
-		$(MODEL_DIR)/
+export-model: ## Export RoBERTa to ONNX (one-time, requires Python ≤ 3.12)
+	@echo "Installing optimum + transformers and exporting model using Docker (Python 3.12)..."
+	docker run --rm -v $$(pwd)/$(MODEL_DIR):/models -w /tmp python:3.12-slim /bin/bash -c "pip install --quiet optimum[onnxruntime] transformers && optimum-cli export onnx --model cardiffnlp/twitter-roberta-base-sentiment /models/"
 	@echo "✓ Model exported to $(MODEL_DIR)/"
 
 build-streaming: ## Compile the Flink streaming fat JAR
-	cd streaming && mvn clean package -DskipTests -q
+	@echo "Building streaming JAR using Maven Docker container..."
+	docker run --rm -v $$(pwd)/streaming:/usr/src/mymaven -w /usr/src/mymaven maven:3.9-eclipse-temurin-11 mvn clean package -DskipTests -q
 	@echo "✓ JAR built at $(STREAMING_JAR)"
 
 submit-job: ## Copy the JAR into Flink and submit the sentiment job
@@ -122,3 +120,36 @@ stop-job: ## Cancel the running sentiment Flink job
 		docker exec flink-jobmanager flink cancel $$JOB_ID && \
 		echo "✓ Cancelled job $$JOB_ID"; \
 	fi
+
+# ── Batch (Spark + PySceneDetect) ─────────────────────────────────────────────
+
+submit-silver: ## Submit the PySceneDetect batch job to Spark Master
+	@# Pre-create the shared tmp dir so Spark executors (non-root) can write Parquet files.
+	@# batch/ is bind-mounted as /opt/spark/batch in all Spark containers.
+	@mkdir -p batch/tmp && chmod 777 batch/tmp
+	@echo "Submitting scene detection job to Spark cluster..."
+	docker exec spark-master /opt/spark/bin/spark-submit \
+		--master spark://spark-master:7077 \
+		--conf spark.pyspark.driver.python=python3 \
+		--conf spark.pyspark.python=./environment/bin/python \
+		--archives /opt/spark/batch/environment.tar.gz#environment \
+		/opt/spark/batch/src/jobs/scene_detection.py
+
+submit-gold: ## Submit the Gold layer batch job to Spark Master
+	@# Pre-create the shared tmp dir so Spark executors (non-root) can write Parquet files.
+	@mkdir -p batch/tmp && chmod 777 batch/tmp
+	@echo "Submitting Gold layer job to Spark cluster..."
+	@set -a && . $(ENV_FILE) && set +a && \
+	docker exec \
+		-e CLICKHOUSE_USER=$$CLICKHOUSE_USER \
+		-e CLICKHOUSE_PASSWORD=$$CLICKHOUSE_PASSWORD \
+		spark-master /opt/spark/bin/spark-submit \
+		--master spark://spark-master:7077 \
+		--conf spark.pyspark.driver.python=python3 \
+		--conf spark.pyspark.python=./environment/bin/python \
+		--archives /opt/spark/batch/environment.tar.gz#environment \
+		--num-executors 2 \
+		--executor-cores 2 \
+		--executor-memory 2g \
+		/opt/spark/batch/src/jobs/gold_layer.py
+

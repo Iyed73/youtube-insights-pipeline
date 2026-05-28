@@ -175,6 +175,8 @@ services:
       - "7077:7077"   # spark-submit endpoint
       - "8083:8080"   # Spark Master Web UI
     command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
+    volumes:
+      - ../batch:/opt/spark/batch
 
   # ── Spark Worker ─────────────────────────────────────────────────────────
   # Spark executor: processes PySpark tasks assigned by the master and writes
@@ -192,6 +194,26 @@ services:
       - --cores
       - "2"
       - spark://spark-master:7077
+    volumes:
+      - ../batch:/opt/spark/batch
+
+  # ── Spark Worker 2 ───────────────────────────────────────────────────────
+  # A second worker node to showcase data partitioning and parallel execution.
+  spark-worker-2:
+    container_name: spark-worker-2
+    image: apache/spark:3.5.7
+    depends_on:
+      - spark-master
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.worker.Worker
+      - --memory
+      - 2G
+      - --cores
+      - "2"
+      - spark://spark-master:7077
+    volumes:
+      - ../batch:/opt/spark/batch
 
   # ── PostgreSQL ────────────────────────────────────────────────────────────
   # Relational store serving two purposes:
