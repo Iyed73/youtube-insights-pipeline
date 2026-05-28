@@ -252,7 +252,11 @@ To ensure that PySceneDetect, OpenCV, PyAV, and MinIO packages are available on 
 If `batch/environment.tar.gz` is not present, or if you update dependencies, build it by running:
 
 ```bash
-docker exec -it spark-master /opt/spark/batch/build_venv.sh
+# Option 1: Use the Makefile helper
+make build-venv
+
+# Option 2: Run directly via docker exec (must run as root)
+docker exec -u root -it spark-master /opt/spark/batch/build_venv.sh
 ```
 
 This script:

@@ -35,7 +35,7 @@ MODEL_DIR     := models/twitter-roberta-sentiment
 
 .PHONY: help install migrate register-schemas discover poll \
         export-model build-streaming submit-job stop-job \
-        download-videos
+        download-videos build-venv
 
 help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -122,6 +122,9 @@ stop-job: ## Cancel the running sentiment Flink job
 	fi
 
 # ── Batch (Spark + PySceneDetect) ─────────────────────────────────────────────
+build-venv: ## Build Spark executor virtual environment inside the container as root
+	@echo "Building Spark virtual environment inside container..."
+	docker exec -u root spark-master /opt/spark/batch/build_venv.sh
 
 submit-silver: ## Submit the PySceneDetect batch job to Spark Master
 	@# Pre-create the shared tmp dir so Spark executors (non-root) can write Parquet files.
