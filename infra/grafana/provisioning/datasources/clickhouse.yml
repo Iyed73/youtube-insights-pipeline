@@ -9,8 +9,8 @@ datasources:
     jsonData:
       server: clickhouse
       port: 9000
-      username: ${CLICKHOUSE_USER:-admin}
+      username: admin
       defaultDatabase: gold
       tlsSkipVerify: true
     secureJsonData:
-      password: ${CLICKHOUSE_PASSWORD:-admin}
+      password: admin
