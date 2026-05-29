@@ -21,7 +21,12 @@ version: "3.8"
 
 # ── Shared Airflow config (reused across webserver, scheduler, init) ─────────
 x-airflow-common: &airflow-common
-  image: apache/airflow:2.9.0
+  # Custom image built by: docker compose -f infra/docker-compose.yml build airflow-base
+  # It extends apache/airflow:2.9.0 and pre-installs the Docker provider.
+  image: youtube-insights/airflow:latest
+  build:
+    context: ..
+    dockerfile: infra/airflow/Dockerfile
   environment: &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres/${AIRFLOW_DB:-airflow}
@@ -29,10 +34,35 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
+    # ── Batch-pipeline secrets ─────────────────────────────────────────────
+    # Forwarded from the host .env file so batch DAGs can pass them into
+    # DockerOperator containers without hard-coding credentials here.
+    POSTGRES_USER: ${POSTGRES_USER:-airflow}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
+    INGESTION_DB: ${INGESTION_DB:-ingestion}
+    MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+    MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+    MINIO_VIDEOS_BUCKET: ${MINIO_VIDEOS_BUCKET:-videos}
+    CLICKHOUSE_USER: ${CLICKHOUSE_USER:-admin}
+    CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-admin}
+    WHISPER_MODEL: ${WHISPER_MODEL:-base}
+    LDA_MAX_TOPICS: ${LDA_MAX_TOPICS:-10}
+    LDA_MAX_ITER: ${LDA_MAX_ITER:-20}
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
+    # Kafka / Schema Registry — hardcoded to Docker service names so the
+    # host-side .env values (localhost:9094 etc.) cannot bleed in.
+    KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    SCHEMA_REGISTRY_URL: http://schema-registry:8080/apis/ccompat/v7
   volumes:
     - ../orchestration/dags:/opt/airflow/dags      # DAG definitions
     - ../orchestration/plugins:/opt/airflow/plugins # Custom Airflow plugins
     - airflow-logs:/opt/airflow/logs
+    # Docker socket — required for DockerOperator (batch_topic_modeling DAG).
+    # If you get "Permission denied" on the socket, run:
+    #   sudo chmod 666 /var/run/docker.sock
+    # or add the airflow user to the docker group on the host.
+    - /var/run/docker.sock:/var/run/docker.sock
   depends_on:
     postgres:
       condition: service_healthy
@@ -170,6 +200,9 @@ services:
   # (per-channel totals, tracked-video counts, historical trend rollups).
   spark-master:
     container_name: spark-master
+    # Explicit image name — referenced by DockerOperator in batch_topic_modeling DAG.
+    # Build with: docker compose -f infra/docker-compose.yml build spark-master
+    image: youtube-insights/spark:latest
     build:
       context: ..
       dockerfile: infra/spark/Dockerfile
@@ -184,6 +217,7 @@ services:
   # Spark executor: processes PySpark tasks assigned by the master and writes
   # aggregated results to ClickHouse for dashboard consumption.
   spark-worker:
+    image: youtube-insights/spark:latest
     build:
       context: ..
       dockerfile: infra/spark/Dockerfile
@@ -296,11 +330,23 @@ services:
   airflow-scheduler:
     container_name: airflow-scheduler
     <<: *airflow-common
+    # Add the host docker group so the airflow user can access the socket
+    # without running as root. DOCKER_GID must match `stat -c '%g' /var/run/docker.sock`
+    # on your host (add DOCKER_GID=<value> to your .env file if it differs from 969).
+    group_add:
+      - "${DOCKER_GID:-969}"
     depends_on:
       postgres:
         condition: service_healthy
       airflow-init:
         condition: service_completed_successfully
+    environment:
+      <<: *airflow-common-env
+      # Allow sub-minute DAG scheduling (e.g. comment_poll at timedelta(seconds=30)).
+      # MIN_FILE_PROCESS_INTERVAL=0 re-parses DAG files immediately, so new
+      # schedules take effect without waiting up to 30 s.
+      AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: "0"
+      AIRFLOW__SCHEDULER__SCHEDULER_HEARTBEAT_SEC: "5"
     command: scheduler
 
   # ── MinIO ─────────────────────────────────────────────────────────────────
@@ -325,6 +371,19 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
+  # ── Ingestion image (build target only) ───────────────────────────────────
+  # Not a running service — exists so `docker compose build ingestion-base`
+  # (or `make build-ingestion`) bakes the image that DockerOperator uses
+  # for discover, poll, and download-videos Airflow tasks.
+  # Build with:  make build-ingestion
+  ingestion-base:
+    image: youtube-insights/ingestion:latest
+    build:
+      context: ..
+      dockerfile: infra/ingestion/Dockerfile
+    profiles:
+      - tools   # excluded from `docker compose up -d`; built on demand
 
 volumes:
   postgres-data:     # Airflow metadata + ingestion tracking state

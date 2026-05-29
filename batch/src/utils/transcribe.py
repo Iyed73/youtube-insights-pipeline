@@ -38,10 +38,41 @@ class TranscriptionStage:
     # ── Spark entry point ─────────────────────────────────────────────────
 
     def run(self, spark: SparkSession, video_rows: list[Row]) -> DataFrame:
-        """Parallelise video metadata and return a DataFrame with transcripts."""
+        """Parallelise video metadata and return a DataFrame with transcripts.
+
+        For each video: reads the cached .txt from MinIO if it exists, otherwise
+        transcribes with Whisper and writes the result back to cache.
+        """
         rdd = spark.sparkContext.parallelize(video_rows)
         transcript_rdd = rdd.mapPartitions(self)
         return spark.createDataFrame(transcript_rdd)
+
+    def load_from_cache(self, spark: SparkSession, video_rows: list[Row]) -> DataFrame:
+        """Return a transcript DataFrame built exclusively from MinIO cache.
+
+        Videos whose .txt cache file is absent are skipped with a warning.
+        Whisper is never loaded. Raises RuntimeError if no transcripts are found.
+        """
+        rdd = spark.sparkContext.parallelize(video_rows)
+        transcript_rdd = rdd.mapPartitions(self._yield_cached_only)
+        df = spark.createDataFrame(transcript_rdd)
+        if df.rdd.isEmpty():
+            raise RuntimeError(
+                "No cached transcripts found in MinIO. "
+                "Run the transcribe job before topic modeling."
+            )
+        return df
+
+    def _yield_cached_only(self, rows: Iterator[Row]) -> Iterator[Row]:
+        """Spark worker function: emit cached transcripts, warn-and-skip missing ones."""
+        client = self._make_minio_client()
+        for row in rows:
+            key = f"{row.channel_id}/{row.video_id}.txt"
+            transcript = self._get_cached(client, key)
+            if transcript is None:
+                print(f"  [WARN] No cached transcript for {row.video_id} — skipping.")
+                continue
+            yield self._make_row(row, transcript)
 
     def __call__(self, rows: Iterator[Row]) -> Iterator[Row]:
         """Called by each Spark worker on its partition of video rows."""

@@ -31,11 +31,13 @@ SRC          := ingestion/src
 STREAMING_JAR := streaming/target/streaming-0.1.0.jar
 MODEL_DIR     := models/twitter-roberta-sentiment
 
+COMPOSE := $(COMPOSE) --env-file $(ENV_FILE)
+
 .DEFAULT_GOAL := help
 
 .PHONY: help install migrate register-schemas discover poll \
         export-model build-streaming submit-job stop-job \
-        download-videos build-batch run-batch
+        download-videos build-airflow build-ingestion build-batch run-batch
 
 help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -125,8 +127,16 @@ stop-job: ## Cancel the running sentiment Flink job
 
 # ── Batch (PySpark + Whisper) ────────────────────────────────────────────
 
+build-airflow: ## Build custom Airflow image with Docker provider pre-installed
+	$(COMPOSE) build airflow-webserver
+	@echo "✓ Airflow image built as youtube-insights/airflow:latest"
+
+build-ingestion: ## Build custom ingestion image (yt-dlp, ffmpeg, all ingestion deps)
+	$(COMPOSE) --profile tools build ingestion-base
+	@echo "✓ Ingestion image built as youtube-insights/ingestion:latest"
+
 build-batch: ## Build custom Spark image with batch dependencies (faster-whisper, etc.)
-	docker compose -f infra/docker-compose.yml build spark-master spark-worker
+	$(COMPOSE) build spark-master spark-worker
 	@echo "✓ Spark images built with batch dependencies"
 
 run-batch: ## Run the topic-modeling batch pipeline (transcribe + LDA)

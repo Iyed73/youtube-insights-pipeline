@@ -50,8 +50,11 @@ class TopicModelingJob:
     ) -> None:
         cfg = self._cfg
 
-        # ── Step 2: Transcribe videos via Spark workers ───────────────────
-        print("\n[Step 2/5] Transcribing videos via Whisper on Spark workers...")
+        # ── Step 2: Load transcripts from MinIO cache ─────────────────────
+        # Expects the transcribe_job to have run first (Airflow task dependency).
+        # load_from_cache() reads .txt files from MinIO and never calls Whisper,
+        # so this job is fast and has no ML dependency.
+        print("\n[Step 2/5] Loading transcripts from MinIO cache...")
         t0 = time.time()
         video_rows = [
             Row(
@@ -72,11 +75,11 @@ class TopicModelingJob:
             bucket=cfg.minio_bucket,
         )
         transcription = TranscriptionStage(minio_cfg, cfg.whisper_model)
-        transcript_df = transcription.run(spark, video_rows)
+        transcript_df = transcription.load_from_cache(spark, video_rows)
         transcript_df.cache()
 
         total = transcript_df.count()
-        print(f"[Step 2/5] Transcribed {total} video(s) in {time.time() - t0:.1f}s.")
+        print(f"[Step 2/5] Loaded {total} cached transcript(s) in {time.time() - t0:.1f}s.")
 
         if total < 6:
             print("Need at least 6 transcripts for meaningful LDA. Skipping topic modeling.")
