@@ -118,10 +118,10 @@ class TopicModelingJob:
         t0 = time.time()
         self._writer.ensure_tables()
         self._writer.delete_previous_runs()
-        self._writer.write_video_topics(results.video_topics)
+        self._writer.write_topic_summary(results.topic_summary)
         self._writer.write_topic_words(results.topic_words)
         print(
-            f"[Step 5/5] Wrote {len(results.video_topics)} video_topics rows "
+            f"[Step 5/5] Wrote {len(results.topic_summary)} topic_summary rows "
             f"and {len(results.topic_words)} topic_words rows in {time.time() - t0:.1f}s."
         )
 

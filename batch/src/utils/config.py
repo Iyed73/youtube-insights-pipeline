@@ -37,10 +37,10 @@ class BatchConfig:
 
     # LDA
     lda_max_topics: int = field(
-        default_factory=lambda: int(os.environ.get("LDA_MAX_TOPICS", "10"))
+        default_factory=lambda: int(os.environ.get("LDA_MAX_TOPICS", "20"))
     )
     lda_max_iter: int = field(
-        default_factory=lambda: int(os.environ.get("LDA_MAX_ITER", "20"))
+        default_factory=lambda: int(os.environ.get("LDA_MAX_ITER", "30"))
     )
 
     # Claude API (topic labeling)

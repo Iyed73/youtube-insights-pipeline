@@ -33,7 +33,7 @@ _lemmatize_udf = F.udf(_lemmatize_tokens, ArrayType(StringType()))
 
 @dataclass
 class TopicModelResults:
-    video_topics: list[dict]
+    topic_summary: list[dict]
     topic_words: list[dict]
 
 
@@ -45,24 +45,28 @@ class TopicModelingStage:
         self._max_topics = max_topics
 
     @staticmethod
-    def choose_num_topics(num_docs: int, max_topics: int = 10) -> int:
-        """Pick k based on corpus size: k = clamp(num_docs // 3, 2, max_topics)."""
-        return max(2, min(num_docs // 3, max_topics))
+    def choose_num_topics(num_docs: int, max_topics: int = 20) -> int:
+        """Pick k based on corpus size: k = clamp(num_docs // 3, 3, max_topics)."""
+        return max(3, min(num_docs // 3, max_topics)) + 2
 
     def run(self, transcript_df: DataFrame) -> tuple[LDAModel, CountVectorizerModel, DataFrame]:
         """Fit the full ML pipeline and return the trained models and transformed DataFrame."""
         num_docs = transcript_df.count()
         num_topics = self.choose_num_topics(num_docs, self._max_topics)
-        min_df = max(1.0, num_docs * 0.05)
+        # Require a word to appear in at least 2 docs (or 10% of corpus, whichever is higher).
+        # This filters single-video jargon that produces incoherent noise topics.
+        min_df = max(2.0, num_docs * 0.10)
+        # Cap vocabulary to keep it proportional to corpus size.
+        vocab_size = min(2000, num_docs * 100)
 
-        print(f"  [LDA] corpus={num_docs} docs, k={num_topics} topics, minDF={min_df:.1f}")
+        print(f"  [LDA] corpus={num_docs} docs, k={num_topics} topics, minDF={min_df:.1f}, vocabSize={vocab_size}")
 
         tokenizer = RegexTokenizer(
             inputCol="transcript", outputCol="tokens", pattern=r"\W+", minTokenLength=3
         )
         remover = StopWordsRemover(inputCol="tokens", outputCol="filtered")
         vectorizer = CountVectorizer(
-            inputCol="lemmatized", outputCol="features", vocabSize=5000, minDF=min_df
+            inputCol="lemmatized", outputCol="features", vocabSize=vocab_size, minDF=min_df, maxDF=0.95
         )
         lda = LDA(k=num_topics, maxIter=self._max_iter, seed=42, featuresCol="features")
 
@@ -80,7 +84,7 @@ class TopicModelingStage:
         """Return a mapping of topic_id -> list of top words (for labeling)."""
         vocabulary = cv_model.vocabulary
         result = {}
-        for t in lda_model.describeTopics(maxTermsPerTopic=10).collect():
+        for t in lda_model.describeTopics(maxTermsPerTopic=20).collect():
             result[t.topic] = [vocabulary[i] for i in t.termIndices]
         return result
 
@@ -93,12 +97,12 @@ class TopicModelingStage:
         run_date,
         topic_labels: dict[int, str] | None = None,
     ) -> TopicModelResults:
-        """Extract per-topic word distributions and per-video topic assignments."""
+        """Extract per-topic word distributions and per-topic satisfaction summaries."""
         labels = topic_labels or {}
         vocabulary = cv_model.vocabulary
         topic_words = self._extract_topic_words(lda_model, vocabulary, run_id, run_date, labels)
-        video_topics = self._extract_video_topics(lda_model, transformed_df, run_id, run_date, labels)
-        return TopicModelResults(video_topics=video_topics, topic_words=topic_words)
+        topic_summary = self._extract_topic_summaries(lda_model, transformed_df, run_id, run_date, labels)
+        return TopicModelResults(topic_summary=topic_summary, topic_words=topic_words)
 
     def describe_topics(self, lda_model: LDAModel, cv_model: CountVectorizerModel) -> None:
         """Print the top words for each topic to stdout."""
@@ -113,7 +117,7 @@ class TopicModelingStage:
         self, lda_model: LDAModel, vocabulary: list[str], run_id: str, run_date, labels: dict[int, str]
     ) -> list[dict]:
         rows = []
-        for t in lda_model.describeTopics(maxTermsPerTopic=10).collect():
+        for t in lda_model.describeTopics(maxTermsPerTopic=20).collect():
             for idx, weight in zip(t.termIndices, t.termWeights):
                 rows.append({
                     "run_id": run_id,
@@ -125,27 +129,30 @@ class TopicModelingStage:
                 })
         return rows
 
-    def _extract_video_topics(
+    def _extract_topic_summaries(
         self, lda_model: LDAModel, transformed_df: DataFrame, run_id: str, run_date, labels: dict[int, str]
     ) -> list[dict]:
+        """Aggregate per-video topic distributions into per-topic satisfaction summaries."""
+        from collections import defaultdict
         num_topics = lda_model.describeTopics().count()
-        rows = []
+        topic_satisfactions: dict[int, list[float]] = defaultdict(list)
+
         for doc in transformed_df.select(
-            "video_id", "channel_id", "channel_name", "satisfaction_pct", "topicDistribution"
+            "satisfaction_pct", "topicDistribution"
         ).collect():
             dist = doc.topicDistribution.toArray()
             dominant = int(np.argmax(dist))
-            for t in range(num_topics):
-                rows.append({
-                    "run_id": run_id,
-                    "run_date": run_date,
-                    "video_id": doc.video_id,
-                    "channel_id": doc.channel_id,
-                    "channel_name": doc.channel_name or doc.channel_id,
-                    "topic_id": t,
-                    "topic_label": labels.get(t, ""),
-                    "topic_weight": float(dist[t]),
-                    "dominant_topic": dominant,
-                    "satisfaction_pct": float(doc.satisfaction_pct),
-                })
+            topic_satisfactions[dominant].append(float(doc.satisfaction_pct))
+
+        rows = []
+        for topic_id in range(num_topics):
+            satisfactions = topic_satisfactions.get(topic_id, [])
+            rows.append({
+                "run_id": run_id,
+                "run_date": run_date,
+                "topic_id": topic_id,
+                "topic_label": labels.get(topic_id, ""),
+                "avg_satisfaction": float(np.mean(satisfactions)) if satisfactions else 0.0,
+                "video_count": len(satisfactions),
+            })
         return rows

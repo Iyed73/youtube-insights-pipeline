@@ -46,13 +46,12 @@ class LabelAndWriteJob:
         # run_date was serialised to ISO string — restore to datetime for ClickHouse.
         run_date: datetime = datetime.fromisoformat(data["run_date"])
         topic_words_map: dict[int, list[str]] = data["topic_words_map"]
-        video_topics: list[dict] = data["video_topics"]
+        topic_summary: list[dict] = data["topic_summary"]
         topic_words: list[dict] = data["topic_words"]
 
         print(f"  run_id:   {run_id}")
         print(f"  run_date: {run_date}")
         print(f"  topics:   {len(topic_words_map)}")
-        print(f"  videos:   {len({r['video_id'] for r in video_topics})}")
 
         # ── Step 2: Label topics via Claude ───────────────────────────────
         print("\n[Step 2/3] Labeling topics via Claude API...")
@@ -63,7 +62,7 @@ class LabelAndWriteJob:
         print(f"  Done in {time.time() - t0:.1f}s.")
 
         # Patch labels and restore run_date (was serialised to string by JSON).
-        for row in video_topics:
+        for row in topic_summary:
             row["topic_label"] = labels.get(row["topic_id"], "")
             row["run_date"] = run_date
         for row in topic_words:
@@ -76,10 +75,10 @@ class LabelAndWriteJob:
         writer = ClickHouseWriter(self._cfg)
         writer.ensure_tables()
         writer.delete_previous_runs()
-        writer.write_video_topics(video_topics)
+        writer.write_topic_summary(topic_summary)
         writer.write_topic_words(topic_words)
         print(
-            f"  Wrote {len(video_topics)} video_topics and {len(topic_words)} topic_words "
+            f"  Wrote {len(topic_summary)} topic_summary and {len(topic_words)} topic_words "
             f"in {time.time() - t0:.1f}s."
         )
 

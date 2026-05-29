@@ -1,0 +1,311 @@
+{
+  "title": "YouTube Emerging Topics",
+  "refresh": "1m",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Topics Discovered",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "grafana-clickhouse-datasource"
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "sqleditor",
+          "format": "table",
+          "rawSql": "SELECT count() AS topics FROM analytics.topic_summary WHERE video_count > 0"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Videos Analyzed",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "grafana-clickhouse-datasource"
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "sqleditor",
+          "format": "table",
+          "rawSql": "SELECT sum(video_count) AS videos FROM analytics.topic_summary"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "purple", "value": null }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Top Topic Avg Satisfaction",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "grafana-clickhouse-datasource"
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "sqleditor",
+          "format": "table",
+          "rawSql": "SELECT max(avg_satisfaction) AS top_satisfaction FROM analytics.topic_summary WHERE video_count > 0"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 40 },
+              { "color": "green", "value": 70 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background"
+      }
+    },
+    {
+      "type": "barchart",
+      "title": "Topics by Audience Satisfaction (what people enjoy most)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "grafana-clickhouse-datasource"
+      },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 4 },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "sqleditor",
+          "format": "table",
+          "rawSql": "SELECT topic_label, avg_satisfaction\nFROM analytics.topic_summary\nWHERE topic_label != '' AND video_count > 0\nORDER BY avg_satisfaction DESC"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "color": { "mode": "continuous-GrYlRd" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 40 },
+              { "color": "green", "value": 70 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "xField": "topic_label",
+        "colorByField": "avg_satisfaction",
+        "barWidth": 0.8,
+        "groupWidth": 0.7,
+        "legend": { "displayMode": "hidden" },
+        "tooltip": { "mode": "single" }
+      }
+    },
+    {
+      "type": "barchart",
+      "title": "Topics by Video Count (most covered topics)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "grafana-clickhouse-datasource"
+      },
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 14 },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "sqleditor",
+          "format": "table",
+          "rawSql": "SELECT topic_label, video_count\nFROM analytics.topic_summary\nWHERE topic_label != '' AND video_count > 0\nORDER BY video_count DESC"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "blue" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "xField": "topic_label",
+        "barWidth": 0.8,
+        "groupWidth": 0.7,
+        "legend": { "displayMode": "hidden" },
+        "tooltip": { "mode": "single" }
+      }
+    },
+    {
+      "type": "table",
+      "title": "Topic Overview — Satisfaction & Reach",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "grafana-clickhouse-datasource"
+      },
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 14 },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "sqleditor",
+          "format": "table",
+          "rawSql": "SELECT\n    topic_label,\n    video_count,\n    avg_satisfaction\nFROM analytics.topic_summary\nWHERE topic_label != '' AND video_count > 0\nORDER BY avg_satisfaction DESC"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "inspect": false
+          },
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 40 },
+              { "color": "green", "value": 70 }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "topic_label" },
+            "properties": [
+              { "id": "displayName", "value": "Topic" },
+              { "id": "custom.width", "value": 260 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "video_count" },
+            "properties": [
+              { "id": "displayName", "value": "Videos" },
+              { "id": "custom.width", "value": 80 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "avg_satisfaction" },
+            "properties": [
+              { "id": "displayName", "value": "Avg Satisfaction" },
+              { "id": "unit", "value": "percent" },
+              { "id": "decimals", "value": 1 },
+              { "id": "custom.cellOptions", "value": { "type": "color-background" } }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "table",
+      "title": "Top Keywords per Topic",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "grafana-clickhouse-datasource"
+      },
+      "gridPos": { "h": 14, "w": 24, "x": 0, "y": 24 },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "sqleditor",
+          "format": "table",
+          "rawSql": "SELECT\n    tw.topic_label,\n    groupArray(10)(tw.word) AS top_words,\n    ts.avg_satisfaction,\n    ts.video_count\nFROM analytics.topic_words tw\nJOIN analytics.topic_summary ts ON tw.topic_id = ts.topic_id\nWHERE tw.topic_label != '' AND ts.video_count > 0\nGROUP BY tw.topic_label, ts.avg_satisfaction, ts.video_count\nORDER BY ts.avg_satisfaction DESC"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "inspect": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "topic_label" },
+            "properties": [
+              { "id": "displayName", "value": "Topic" },
+              { "id": "custom.width", "value": 220 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "top_words" },
+            "properties": [
+              { "id": "displayName", "value": "Top Keywords" },
+              { "id": "custom.width", "value": 500 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "avg_satisfaction" },
+            "properties": [
+              { "id": "displayName", "value": "Avg Satisfaction" },
+              { "id": "unit", "value": "percent" },
+              { "id": "decimals", "value": 1 },
+              { "id": "custom.width", "value": 140 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "video_count" },
+            "properties": [
+              { "id": "displayName", "value": "Videos" },
+              { "id": "custom.width", "value": 80 }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "schemaVersion": 30
+}

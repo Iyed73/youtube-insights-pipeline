@@ -112,7 +112,7 @@ class LdaJob:
             "run_id": run_id,
             "run_date": run_date.isoformat(),
             "topic_words_map": topic_words_map,
-            "video_topics": results.video_topics,
+            "topic_summary": results.topic_summary,
             "topic_words": results.topic_words,
         })
         print("\n=== LDA job complete — results saved to MinIO ===")
