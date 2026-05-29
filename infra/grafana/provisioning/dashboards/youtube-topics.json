@@ -1,10 +1,7 @@
 {
   "title": "YouTube Emerging Topics",
   "refresh": "1m",
-  "time": {
-    "from": "now-7d",
-    "to": "now"
-  },
+  "timepicker": { "hidden": true },
   "panels": [
     {
       "type": "stat",
