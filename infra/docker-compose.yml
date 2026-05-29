@@ -15,6 +15,7 @@
 #   9002  MinIO S3 API
 #   9092  Kafka (internal — for Dockerised services)
 #   9094  Kafka (external — for services running directly on the host)
+#   3000  Grafana Web UI
 #   5432  PostgreSQL
 
 version: "3.8"
@@ -339,8 +340,30 @@ services:
       retries: 5
       start_period: 10s
 
+  # ── Grafana ───────────────────────────────────────────────────────────────
+  # Visualization layer: dashboards powered by ClickHouse as a datasource.
+  # Provisioned automatically with a ClickHouse datasource and the video
+  # insights dashboard (gold layer results).
+  grafana:
+    container_name: grafana
+    image: grafana/grafana:10.4.2
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
 volumes:
   postgres-data:     # Airflow metadata + ingestion tracking state
   clickhouse-data:   # Speed-view sentiment scores + batch aggregation results
   airflow-logs:      # Airflow task execution logs
   minio-data:        # Downloaded video files for Spark batch processing
+  grafana-data:      # Grafana state (users, alert history, plugin cache)

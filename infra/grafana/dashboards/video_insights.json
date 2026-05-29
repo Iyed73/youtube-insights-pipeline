@@ -1,0 +1,411 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana/annotations-datasource" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "refresh": "1m",
+  "schemaVersion": 38,
+  "tags": ["clickhouse", "batch", "youtube"],
+  "time": { "from": "now-7d", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "YouTube Video Insights",
+  "uid": "video-insights",
+  "version": 1,
+  "panels": [
+
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Videos Analyzed",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "blue", "value": null }]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+          "rawSql": "SELECT count() AS value FROM gold.video_insights FINAL",
+          "format": 1
+        }
+      ]
+    },
+
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Avg Sentiment Score",
+      "description": "Weighted average of (positive - negative) / total, range -1 to +1",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 3,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null },
+              { "color": "yellow", "value": 0 },
+              { "color": "green",  "value": 0.2 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+          "rawSql": "SELECT round(avg(sentiment_score), 3) AS value FROM gold.video_insights FINAL WHERE sentiment_score IS NOT NULL",
+          "format": 1
+        }
+      ]
+    },
+
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Avg Shot Length (ASL)",
+      "description": "Average time between scene cuts in seconds. Lower = faster editing pace.",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 1,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "purple", "value": null }]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+          "rawSql": "SELECT round(avg(asl_sec), 1) AS value FROM gold.video_insights FINAL WHERE asl_sec IS NOT NULL",
+          "format": 1
+        }
+      ]
+    },
+
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Total Comments",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "orange", "value": null }]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+          "rawSql": "SELECT sum(total_comments) AS value FROM gold.video_insights FINAL WHERE total_comments IS NOT NULL",
+          "format": 1
+        }
+      ]
+    },
+
+    {
+      "id": 5,
+      "type": "piechart",
+      "title": "Editing Pace Distribution",
+      "description": "fast = ASL < 3s, medium = 3-8s, slow = ASL > 8s",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 4 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+      "options": {
+        "displayLabels": ["name", "percent"],
+        "legend": { "displayMode": "table", "placement": "right", "showLegend": true },
+        "pieType": "donut"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "fast"   }, "properties": [{ "id": "color", "value": { "fixedColor": "green",  "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "medium" }, "properties": [{ "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "slow"   }, "properties": [{ "id": "color", "value": { "fixedColor": "red",    "mode": "fixed" } }] }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+          "rawSql": "SELECT editing_pace, count() AS videos FROM gold.video_insights FINAL WHERE editing_pace IS NOT NULL GROUP BY editing_pace ORDER BY editing_pace",
+          "format": 1
+        }
+      ],
+      "transformations": [
+        {
+          "id": "prepareTimeSeries",
+          "options": { "format": "wide" }
+        }
+      ]
+    },
+
+    {
+      "id": 6,
+      "type": "barchart",
+      "title": "Avg Sentiment Score by Editing Pace",
+      "description": "Key insight: does faster editing correlate with higher viewer satisfaction?",
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 4 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+      "options": {
+        "barWidth": 0.6,
+        "fillOpacity": 80,
+        "gradientMode": "none",
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "orientation": "auto",
+        "tooltip": { "mode": "single", "sort": "none" },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 100
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "decimals": 3,
+          "custom": {
+            "axisLabel": "Avg Sentiment Score",
+            "fillOpacity": 80,
+            "lineWidth": 1
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null },
+              { "color": "yellow", "value": 0 },
+              { "color": "green",  "value": 0.2 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+          "rawSql": "SELECT editing_pace, round(avg(sentiment_score), 3) AS avg_sentiment, round(avg(positive_ratio), 3) AS avg_positive_ratio, round(avg(negative_ratio), 3) AS avg_negative_ratio FROM gold.video_insights FINAL WHERE editing_pace IS NOT NULL AND sentiment_score IS NOT NULL GROUP BY editing_pace ORDER BY editing_pace",
+          "format": 1
+        }
+      ]
+    },
+
+    {
+      "id": 7,
+      "type": "barchart",
+      "title": "Avg Sentiment Score by Channel",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 12 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+      "options": {
+        "barWidth": 0.7,
+        "fillOpacity": 80,
+        "gradientMode": "none",
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "orientation": "auto",
+        "tooltip": { "mode": "single", "sort": "none" },
+        "xTickLabelRotation": -30,
+        "xTickLabelSpacing": 150
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 3,
+          "custom": {
+            "axisLabel": "Avg Sentiment Score",
+            "fillOpacity": 80
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null },
+              { "color": "yellow", "value": 0 },
+              { "color": "green",  "value": 0.2 }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "videos" },
+            "properties": [
+              { "id": "custom.axisPlacement", "value": "right" },
+              { "id": "custom.drawStyle",     "value": "points" },
+              { "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+          "rawSql": "SELECT channel_id, round(avg(sentiment_score), 3) AS avg_sentiment, count() AS videos FROM gold.video_insights FINAL WHERE sentiment_score IS NOT NULL GROUP BY channel_id ORDER BY avg_sentiment DESC LIMIT 20",
+          "format": 1
+        }
+      ]
+    },
+
+    {
+      "id": 8,
+      "type": "barchart",
+      "title": "Sentiment Breakdown by Channel",
+      "description": "Positive / Neutral / Negative comment ratios per channel",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 21 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+      "options": {
+        "barWidth": 0.7,
+        "fillOpacity": 80,
+        "gradientMode": "none",
+        "groupWidth": 0.7,
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "orientation": "auto",
+        "stacking": "normal",
+        "tooltip": { "mode": "multi", "sort": "none" },
+        "xTickLabelRotation": -30,
+        "xTickLabelSpacing": 150
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "decimals": 2,
+          "unit": "percentunit",
+          "custom": { "fillOpacity": 80 }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "avg_positive_ratio" }, "properties": [{ "id": "color", "value": { "fixedColor": "green",  "mode": "fixed" } }, { "id": "displayName", "value": "Positive" }] },
+          { "matcher": { "id": "byName", "options": "avg_neutral_ratio"  }, "properties": [{ "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }, { "id": "displayName", "value": "Neutral"  }] },
+          { "matcher": { "id": "byName", "options": "avg_negative_ratio" }, "properties": [{ "id": "color", "value": { "fixedColor": "red",    "mode": "fixed" } }, { "id": "displayName", "value": "Negative" }] }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+          "rawSql": "SELECT channel_id, round(avg(positive_ratio), 3) AS avg_positive_ratio, round(avg(neutral_ratio), 3) AS avg_neutral_ratio, round(avg(negative_ratio), 3) AS avg_negative_ratio FROM gold.video_insights FINAL WHERE positive_ratio IS NOT NULL GROUP BY channel_id ORDER BY avg_positive_ratio DESC LIMIT 20",
+          "format": 1
+        }
+      ]
+    },
+
+    {
+      "id": 9,
+      "type": "table",
+      "title": "Top Videos by Sentiment Score",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 30 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+      "options": {
+        "footer": { "fields": "", "reducer": ["sum"], "show": false },
+        "showHeader": true,
+        "sortBy": [{ "displayName": "sentiment_score", "desc": true }]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "align": "auto", "displayMode": "auto" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "sentiment_score" },
+            "properties": [
+              { "id": "custom.displayMode", "value": "color-background" },
+              { "id": "thresholds", "value": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red",    "value": null },
+                  { "color": "yellow", "value": 0 },
+                  { "color": "green",  "value": 0.2 }
+                ]
+              }}
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "editing_pace" },
+            "properties": [
+              { "id": "custom.displayMode", "value": "color-background" },
+              { "id": "mappings", "value": [
+                { "type": "value", "options": { "fast":   { "color": "green",  "index": 0 } } },
+                { "type": "value", "options": { "medium": { "color": "yellow", "index": 1 } } },
+                { "type": "value", "options": { "slow":   { "color": "red",    "index": 2 } } }
+              ]}
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+          "rawSql": "SELECT video_id, channel_id, editing_pace, cuts, round(asl_sec, 1) AS asl_sec, round(avg_brightness, 1) AS avg_brightness, total_comments, positive_count, negative_count, round(sentiment_score, 3) AS sentiment_score, batch_ts FROM gold.video_insights FINAL WHERE sentiment_score IS NOT NULL ORDER BY sentiment_score DESC LIMIT 50",
+          "format": 1
+        }
+      ]
+    }
+
+  ]
+}
