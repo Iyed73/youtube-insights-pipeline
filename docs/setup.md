@@ -40,7 +40,6 @@ cp .env.example .env
 make install
 ```
 
-> `ingestion/` and `streaming/` are ready. `batch/` and `orchestration/` are not yet functional.
 > Run `make help` to see all available targets.
 
 ### 3. Start infrastructure
@@ -188,6 +187,59 @@ make download-videos
 > **Host vs Docker:** When running `make download-videos` on your host machine, set `MINIO_ENDPOINT=localhost:9002` and `CLICKHOUSE_HOST=localhost` in `.env`. The defaults (`minio:9000`, `clickhouse`) only work inside the Docker network.
 
 Browse uploaded videos at **http://localhost:9001** (MinIO Web Console, login: `minioadmin` / `minioadmin`).
+
+### Batch topic modeling
+
+Transcribes top-satisfaction videos with Whisper and runs LDA topic modeling. Must have run `make download-videos` at least once first.
+
+**One-time: build the custom Spark image** (installs `faster-whisper` and batch dependencies into the Spark worker containers):
+
+```bash
+make build-batch
+```
+
+This bakes the Whisper `base` model into the image (~150 MB download on first build). Subsequent builds are fast unless `batch/pyproject.toml` changes.
+
+**Run the batch pipeline:**
+
+```bash
+make run-batch
+```
+
+What it does:
+1. Queries PostgreSQL for all completed downloads
+2. For each video: checks MinIO for a cached transcript — transcribes with Whisper if not found, caches the result
+3. Runs the Spark ML pipeline: tokenize → remove stop words → vectorize → LDA (k=5 topics)
+4. Writes versioned results to ClickHouse: `analytics.video_topics` and `analytics.topic_words`
+
+Transcription is idempotent — videos already transcribed are skipped on subsequent runs. LDA retrains on the full corpus every run to produce stable topic IDs.
+
+**Relevant env vars** (in `.env`):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WHISPER_MODEL` | `base` | Whisper model size: `tiny`, `base`, `small`, `medium` |
+| `LDA_NUM_TOPICS` | `5` | Number of topics for LDA |
+| `LDA_MAX_ITER` | `20` | LDA training iterations |
+| `SPARK_MASTER` | `spark://spark-master:7077` | Spark cluster URL |
+
+**Verify results:**
+
+```bash
+docker exec -it clickhouse clickhouse-client --user admin --password admin --query "
+SELECT run_date, dominant_topic, video_id, satisfaction_pct
+FROM analytics.video_topics
+WHERE run_id = (SELECT run_id FROM analytics.video_topics ORDER BY run_date DESC LIMIT 1)
+ORDER BY dominant_topic, satisfaction_pct DESC;"
+```
+
+```bash
+docker exec -it clickhouse clickhouse-client --user admin --password admin --query "
+SELECT topic_id, word, weight
+FROM analytics.topic_words
+WHERE run_id = (SELECT run_id FROM analytics.topic_words ORDER BY run_date DESC LIMIT 1)
+ORDER BY topic_id, weight DESC;"
+```
 
 ---
 

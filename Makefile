@@ -35,7 +35,7 @@ MODEL_DIR     := models/twitter-roberta-sentiment
 
 .PHONY: help install migrate register-schemas discover poll \
         export-model build-streaming submit-job stop-job \
-        download-videos
+        download-videos build-batch run-batch
 
 help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -122,3 +122,39 @@ stop-job: ## Cancel the running sentiment Flink job
 		docker exec flink-jobmanager flink cancel $$JOB_ID && \
 		echo "✓ Cancelled job $$JOB_ID"; \
 	fi
+
+# ── Batch (PySpark + Whisper) ────────────────────────────────────────────
+
+build-batch: ## Build custom Spark image with batch dependencies (faster-whisper, etc.)
+	docker compose -f infra/docker-compose.yml build spark-master spark-worker
+	@echo "✓ Spark images built with batch dependencies"
+
+run-batch: ## Run the topic-modeling batch pipeline (transcribe + LDA)
+	@set -a && . $(ENV_FILE) && set +a && \
+	docker exec \
+		-e POSTGRES_HOST=postgres \
+		-e POSTGRES_PORT=5432 \
+		-e POSTGRES_USER=$$POSTGRES_USER \
+		-e POSTGRES_PASSWORD=$$POSTGRES_PASSWORD \
+		-e INGESTION_DB=$$INGESTION_DB \
+		-e MINIO_ENDPOINT=minio:9000 \
+		-e MINIO_ACCESS_KEY=$$MINIO_ACCESS_KEY \
+		-e MINIO_SECRET_KEY=$$MINIO_SECRET_KEY \
+		-e MINIO_VIDEOS_BUCKET=$${MINIO_VIDEOS_BUCKET:-videos} \
+		-e CLICKHOUSE_HOST=clickhouse \
+		-e CLICKHOUSE_HTTP_PORT=8123 \
+		-e CLICKHOUSE_USER=$$CLICKHOUSE_USER \
+		-e CLICKHOUSE_PASSWORD=$$CLICKHOUSE_PASSWORD \
+		-e SPARK_MASTER=spark://spark-master:7077 \
+		-e WHISPER_MODEL=$${WHISPER_MODEL:-base} \
+		-e LDA_NUM_TOPICS=$${LDA_NUM_TOPICS:-5} \
+		-e LDA_MAX_ITER=$${LDA_MAX_ITER:-20} \
+		-e ANTHROPIC_API_KEY=$$ANTHROPIC_API_KEY \
+		-e PYTHONPATH=/opt/spark/work/batch \
+		spark-master \
+		/opt/spark/bin/spark-submit \
+			--master spark://spark-master:7077 \
+			--conf spark.pyspark.python=python3 \
+			--conf spark.executorEnv.PYTHONPATH=/opt/spark/work/batch \
+			/opt/spark/work/batch/jobs/topic_modeling.py
+	@echo "✓ Batch job complete"

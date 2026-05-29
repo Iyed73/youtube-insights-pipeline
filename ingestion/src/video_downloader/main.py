@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 from dataclasses import dataclass
@@ -9,6 +10,15 @@ from pathlib import Path
 import requests
 import yt_dlp
 from minio import Minio
+
+
+class _QuietLogger:
+    """Suppresses yt-dlp text output while allowing progress hooks to fire."""
+
+    def debug(self, msg): pass
+    def info(self, msg): pass
+    def warning(self, msg): pass
+    def error(self, msg): logging.error(msg)
 
 import db
 from models import TrackedVideo
@@ -31,6 +41,7 @@ class Config:
     top_n: int
     min_comments: int
     max_height: int
+    max_duration_sec: int
 
 
 def _cfg() -> Config:
@@ -47,6 +58,7 @@ def _cfg() -> Config:
         top_n=int(os.environ.get("TOP_VIDEOS_TO_DOWNLOAD", "5")),
         min_comments=int(os.environ.get("MIN_COMMENTS_FOR_DOWNLOAD", "50")),
         max_height=int(os.environ.get("VIDEO_MAX_HEIGHT", "720")),
+        max_duration_sec=int(os.environ.get("VIDEO_MAX_DURATION_SEC", "600")),
     )
 
 
@@ -135,9 +147,11 @@ def download_and_upload(
             "format": f"bestvideo[ext=mp4][height<={cfg.max_height}]+bestaudio[ext=m4a]/best[ext=mp4][height<={cfg.max_height}]/best",
             "outtmpl": out_path,
             "merge_output_format": "mp4",
-            "quiet": True,
-            "no_warnings": True,
+            "logger": _QuietLogger(),
+            "noprogress": True,
             "progress_hooks": [_ydl_progress_hook],
+            "download_ranges": yt_dlp.utils.download_range_func(None, [(0, cfg.max_duration_sec)]),
+            "force_keyframes_at_cuts": True,
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([f"https://www.youtube.com/watch?v={video_id}"])

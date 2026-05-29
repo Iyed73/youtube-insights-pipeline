@@ -170,20 +170,29 @@ services:
   # (per-channel totals, tracked-video counts, historical trend rollups).
   spark-master:
     container_name: spark-master
-    image: apache/spark:3.5.7
+    build:
+      context: ..
+      dockerfile: infra/spark/Dockerfile
     ports:
       - "7077:7077"   # spark-submit endpoint
       - "8083:8080"   # Spark Master Web UI
+    volumes:
+      - ../batch/src:/opt/spark/work/batch:ro  # PySpark job source code
     command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
 
   # ── Spark Worker ─────────────────────────────────────────────────────────
   # Spark executor: processes PySpark tasks assigned by the master and writes
   # aggregated results to ClickHouse for dashboard consumption.
   spark-worker:
-    container_name: spark-worker
-    image: apache/spark:3.5.7
+    build:
+      context: ..
+      dockerfile: infra/spark/Dockerfile
     depends_on:
       - spark-master
+    volumes:
+      - ../batch/src:/opt/spark/work/batch:ro  # PySpark job source code
+    environment:
+      SPARK_WORKER_DIR: /tmp/spark-worker
     command:
       - /opt/spark/bin/spark-class
       - org.apache.spark.deploy.worker.Worker
