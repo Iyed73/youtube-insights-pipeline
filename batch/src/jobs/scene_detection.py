@@ -295,7 +295,7 @@ def main() -> None:
 
     spark.sparkContext.setLogLevel("WARN")
 
-    # ── Phase 3.1: Read the Bronze Layer — query PostgreSQL for unprocessed videos ────────────
+    # ── Read the Bronze Layer — query PostgreSQL for unprocessed videos ────────────
     print(f"[Bronze] Querying PostgreSQL for unprocessed videos...")
     try:
         db_records = fetch_unprocessed_videos_from_db(cfg)
@@ -326,7 +326,7 @@ def main() -> None:
         spark.stop()
         return
 
-    # ── Phase 3.2: Materialise as a Spark DataFrame ───────────────────────────
+    # ── Materialise as a Spark DataFrame ───────────────────────────
     CATALOG_SCHEMA = StructType([
         StructField("channel_id",  StringType(), nullable=False),
         StructField("video_id",    StringType(), nullable=False),
@@ -338,12 +338,9 @@ def main() -> None:
     print(f"\n[Bronze] Target video list ({target_df.count()} video(s)):")
     target_df.show(truncate=False)
 
-    # ── Phase 4: Distribute to workers for parallel scene analysis ────────────
-    # Step 4.1: .rdd drops below the DataFrame layer to a raw distributed
-    # collection of Row objects.
-    # Step 4.2: mapPartitions ships analyse_partition + the config closure to
-    # every executor; each executor receives an iterator of its assigned rows
-    # and constructs exactly one MinIO client for the entire batch.
+    # ── Distribute to workers for parallel scene analysis ────────────
+    # .rdd drops below the DataFrame layer to a raw distributed collection of Row objects.
+    # mapPartitions ships analyse_partition + the config closure to every worker; each worker receives an iterator of its assigned rows and constructs exactly one MinIO client for the entire batch.
     num_partitions = NUM_WORKERS * CORES_PER_WORKER
 
     results_rdd = target_df.repartition(num_partitions).rdd.mapPartitions(
@@ -358,9 +355,7 @@ def main() -> None:
         )
     )
 
-    # ── Phase 9.2: Rebuild the DataFrame ─────────────────────────────────────
-    # RESULT_SCHEMA now includes ArrayType(IntegerType()) for cut_density.
-    # Passing the schema explicitly prevents CANNOT_DETERMINE_TYPE on None fields.
+    # ── Rebuild the DataFrame ─────────────────────────────────────
     results_df = spark.createDataFrame(results_rdd, schema=RESULT_SCHEMA)
 
     # Cache BEFORE the first action: show() and write() must share the same
@@ -373,7 +368,7 @@ def main() -> None:
     print("\n── Scene Detection Results ──")
     results_df.show(truncate=False)
 
-    # ── Phase 9.3: Write to the Silver Bucket ────────────────────────────────
+    # ── Write to the Silver Bucket ────────────────────────────────
     # Use /opt/spark/batch/tmp/ — this directory is a shared bind-mount
     # (../batch → /opt/spark/batch) present on spark-master AND both workers.
     # Writing to /tmp/ would land on the executor's private local filesystem
@@ -387,7 +382,7 @@ def main() -> None:
         driver_minio.fput_object(cfg.results_bucket, object_name, parquet_file)
         print(f"  -> Uploaded {object_name} to bucket '{cfg.results_bucket}'")
 
-    # ── Phase 9.4: Update PostgreSQL state ───────────────────────────────────
+    # ── Update PostgreSQL state ───────────────────────────────────
     # Identify successfully processed video IDs (status == "ok")
     success_rows = results_df.filter(results_df.status == "ok").select("video_id").collect()
     success_video_ids = [row.video_id for row in success_rows]
