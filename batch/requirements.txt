@@ -1,0 +1,8 @@
+minio
+scenedetect[opencv]
+av
+numpy
+clickhouse-connect==0.7.19
+sqlalchemy
+psycopg2-binary
+venv-pack

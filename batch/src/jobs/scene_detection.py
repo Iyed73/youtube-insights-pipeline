@@ -30,7 +30,6 @@ Python environment note:
 """
 
 from __future__ import annotations
-from minio import commonconfig
 
 import glob
 import os
