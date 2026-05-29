@@ -1,5 +1,5 @@
 """
-scene_detection.py — Spark Batch Job (Phase 2 + 3)
+scene_detection.py — Spark Batch Job
 
 Uses PySceneDetect to analyze "cut rate" (editing pace) for every video stored
 in MinIO, then emits per-video metrics that can be joined against ClickHouse
@@ -47,9 +47,7 @@ from pyspark.sql.types import (
     StructType,
 )
 
-# ── Phase 9.1: Silver Schema ──────────────────────────────────────────────────
-# Explicit schema — avoids CANNOT_DETERMINE_TYPE when result fields are None.
-# ArrayType(IntegerType()) carries the cut_density matrix (cuts per 60-sec window).
+# ── Silver Schema ──────────────────────────────────────────────────
 RESULT_SCHEMA = StructType([
     StructField("video_id",       StringType(),              nullable=False),
     StructField("channel_id",     StringType(),              nullable=False),
@@ -67,13 +65,13 @@ RESULT_SCHEMA = StructType([
 
 @dataclass
 class Config:
-    minio_endpoint: str      # host:port only — minio SDK does not want a scheme
+    minio_endpoint: str
     minio_access_key: str
     minio_secret_key: str
     videos_bucket: str
     results_bucket: str
-    scene_threshold: float   # AdaptiveDetector threshold (0–100), default 3.0
-    downscale_factor: int    # Phase 6.2: frame downscale passed to SceneManager
+    scene_threshold: float
+    downscale_factor: int
     postgres_host: str
     postgres_port: int
     postgres_user: str
@@ -83,7 +81,6 @@ class Config:
 
 def _cfg() -> Config:
     endpoint = os.environ.get("MINIO_ENDPOINT", "minio:9000")
-    # Strip scheme if accidentally provided — minio SDK wants host:port only
     endpoint = endpoint.replace("http://", "").replace("https://", "")
     return Config(
         minio_endpoint=endpoint,
@@ -92,8 +89,7 @@ def _cfg() -> Config:
         videos_bucket=os.environ.get("MINIO_VIDEOS_BUCKET", "videos"),
         results_bucket=os.environ.get("MINIO_RESULTS_BUCKET", "analytics"),
         scene_threshold=float(os.environ.get("SCENE_THRESHOLD", "3.0")),
-        # Phase 6.2: default factor of 4 shrinks a 1280×720 frame to 320×180,
-        # keeping each OpenCV matrix ~16× smaller in RAM.
+        # default factor of 4 shrinks a 1280×720 frame to 320×180, keeping each OpenCV matrix ~16× smaller in RAM.
         downscale_factor=int(os.environ.get("DOWNSCALE_FACTOR", "4")),
         postgres_host=os.environ.get("POSTGRES_HOST", "postgres"),
         postgres_port=int(os.environ.get("POSTGRES_PORT", "5432")),
@@ -157,7 +153,7 @@ def mark_videos_processed_in_db(cfg: Config, video_ids: list[str], results_path:
         conn.close()
 
 
-# ── Worker logic (runs on each Spark executor) ────────────────────────────────
+# ── Worker logic ────────────────────────────────
 
 def analyse_partition(
     rows: Iterator[Row],
@@ -191,7 +187,6 @@ def analyse_partition(
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
                 tmp_path = tmp.name
 
-            # ── Phase 5.3: Download from MinIO ────────────────────────────────
             import time
             for attempt in range(3):
                 try:
@@ -202,18 +197,17 @@ def analyse_partition(
                         raise
                     time.sleep(2 ** attempt)
 
-            # ── Phase 6: PySceneDetect via PyAV backend ───────────────────────
-            # backend='pyav' bypasses cv2 entirely for frame decoding.
+            # ── PySceneDetect via PyAV backend ───────────────────────
             video         = open_video(tmp_path, backend='pyav')
             scene_manager = SceneManager()
             scene_manager.add_detector(
                 AdaptiveDetector(adaptive_threshold=scene_threshold)
             )
             scene_manager.downscale = downscale_factor
-            scene_manager.detect_scenes(video, show_progress=False)
+            scene_manager.detect_scenes(video, show_progress=True)
             scene_list = scene_manager.get_scene_list()
 
-            # ── Phase 7.1: Cuts + Duration via PyAV ──────────────────────────
+            # ── Cuts + Duration via PyAV ──────────────────────────
             cuts = max(0, len(scene_list) - 1)
 
             container    = av.open(tmp_path)
@@ -222,30 +216,30 @@ def analyse_partition(
             # av duration is in microseconds
             duration_sec = (container.duration / 1_000_000) if container.duration else 0.0
 
-            # ── Phase 7.2: ASL ────────────────────────────────────────────────
+            # ── ASL ────────────────────────────────────────────────
             asl_sec = round(duration_sec / cuts, 3) if cuts > 0 else None
 
-            # ── Phase 7.3: Cut Density ────────────────────────────────────────
+            # ── Cut Density ────────────────────────────────────────
             if cuts > 0:
                 total_minutes = max(1, int(duration_sec // 60) + 1)
                 cut_density   = [0] * total_minutes
+                # PySceneDetect returns a list of timeline segments. The very first element in scene_list always marks the absolute start of the video (00:00.000).We skip the start by slicing the list with [1:]
                 for scene_start, _ in scene_list[1:]:
                     cut_sec    = scene_start.get_seconds()
+                    # find the minute bucket the cut belongs to.
                     bucket_idx = min(int(cut_sec // 60), total_minutes - 1)
                     cut_density[bucket_idx] += 1
             else:
                 cut_density = [0]
 
-            # ── Phase 7.4: Avg Brightness via PyAV ───────────────────────────
-            # Decode every Nth frame (1 per second) directly via PyAV —
-            # no cv2 codec dependency at all.
+            # ── Avg Brightness via PyAV ───────────────────────────
             sample_interval    = max(1, int(fps))
             brightness_samples = []
             frame_idx          = 0
 
+            # If a video runs at 30 frames per second (FPS), sample_interval evaluates to 30. The modulo condition (frame_idx % sample_interval == 0) ensures the script only analyzes frame 0, frame 30, frame 60, and so on. This maps perfectly to a 1-frame-per-second sampling rate, skipping 97% of the data while maintaining a reliable visual profile of the content.
             for av_frame in container.decode(video=0):
                 if frame_idx % sample_interval == 0:
-                    # to_ndarray('gray') gives a uint8 HxW array (0=black, 255=white)
                     gray = av_frame.to_ndarray(format='gray')
                     brightness_samples.append(float(np.mean(gray)))
                 frame_idx += 1
