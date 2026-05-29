@@ -385,6 +385,25 @@ services:
     profiles:
       - tools   # excluded from `docker compose up -d`; built on demand
 
+  # ── Grafana ───────────────────────────────────────────────────────────────
+  # Dashboards to visualize the stream layer results
+  grafana:
+    container_name: grafana
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_INSTALL_PLUGINS=grafana-clickhouse-datasource
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+      - GF_USERS_DEFAULT_THEME=light
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
 volumes:
   postgres-data:     # Airflow metadata + ingestion tracking state
   clickhouse-data:   # Speed-view sentiment scores + batch aggregation results

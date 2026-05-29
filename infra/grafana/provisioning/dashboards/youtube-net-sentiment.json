@@ -1,0 +1,94 @@
+{
+  "title": "YouTube Net Sentiment Speed View",
+  "refresh": "5s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "type": "table",
+      "title": "Channel Net Sentiment Details",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "grafana-clickhouse-datasource"
+      },
+      "gridPos": { "h": 20, "w": 24, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "sqleditor",
+          "format": "table",
+          "rawSql": "SELECT\n    channel_name,\n    count() AS total_comments,\n    countIf(sentiment = 'Positive') AS total_positive,\n    countIf(sentiment = 'Negative') AS total_negative,\n    countIf(sentiment = 'Neutral') AS total_neutral,\n    if(total_comments > 0, \n       (total_positive - total_negative) / total_comments, \n       0) AS net_sentiment_score\nFROM analytics.comments\nWHERE $__timeFilter(published_at)\nGROUP BY channel_name\nORDER BY total_comments DESC"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0 },
+              { "color": "green", "value": 0.2 }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "channel_name" },
+            "properties": [
+              { "id": "displayName", "value": "𝗖𝗵𝗮𝗻𝗻𝗲𝗹 𝗡𝗮𝗺𝗲" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "total_comments" },
+            "properties": [
+              { "id": "displayName", "value": "𝗧𝗼𝘁𝗮𝗹 𝗖𝗼𝗺𝗺𝗲𝗻𝘁𝘀" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "total_neutral" },
+            "properties": [
+              { "id": "displayName", "value": "𝗡𝗲𝘂𝘁𝗿𝗮𝗹" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "net_sentiment_score" },
+            "properties": [
+              { "id": "displayName", "value": "𝗡𝗲𝘁 𝗦𝗲𝗻𝘁𝗶𝗺𝗲𝗻𝘁" },
+              { "id": "custom.cellOptions", "value": { "type": "color-background" } },
+              { "id": "unit", "value": "percentunit" },
+              { "id": "decimals", "value": 1 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "total_positive" },
+            "properties": [
+              { "id": "displayName", "value": "𝗣𝗼𝘀𝗶𝘁𝗶𝘃𝗲" },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "total_negative" },
+            "properties": [
+              { "id": "displayName", "value": "𝗡𝗲𝗴𝗮𝘁𝗶𝘃𝗲" },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "schemaVersion": 30
+}
