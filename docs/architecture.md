@@ -34,7 +34,7 @@ YouTube API
                 MinIO: videos/
                     │
                     ▼
-                Spark (Python) — TopicModelingJob        [batch path]
+                Airflow DAG: batch_topic_modeling (Spark) [batch path]
                     TranscriptionStage (mapPartitions)
                         faster-whisper → MinIO: {channel_id}/{video_id}.txt (cached)
                     TopicModelingStage
@@ -60,11 +60,11 @@ Transcripts are cached in MinIO so Whisper only runs on new videos. LDA retrains
 | Component | Technology | Role |
 |-----------|-----------|------|
 | Channel Discovery | Python | Polls YouTube API for top videos per channel, publishes to Kafka |
-| Comment Poller | Python | Polls new comments per video, publishes to Kafka |
+| Comment Poller | Python (long-running service) | Polls new comments per active video every 30 s, publishes to Kafka |
 | Video Downloader | Python | Downloads top-satisfaction videos to MinIO |
 | Flink Sentiment Job | Java / Apache Flink 1.18 | Consumes comments from Kafka, runs RoBERTa sentiment analysis, writes to ClickHouse |
-| Spark Batch Job | Python / Apache Spark 3.5 | Transcribes videos with Whisper, runs LDA topic modeling, writes to ClickHouse |
-| Airflow | Apache Airflow 2.9 | Orchestrates ingestion schedules and batch job submission |
+| Spark Batch Job | Python / Apache Spark 4.0 | Transcribes videos with Whisper, runs LDA topic modeling, writes to ClickHouse |
+| Airflow | Apache Airflow 2.9 | Schedules channel discovery, video downloads and the batch pipeline |
 | Kafka | Apache Kafka 3.9 (KRaft) | Message bus between ingestion and streaming layers |
 | Schema Registry | Apicurio Registry | Stores and serves Avro schemas for Kafka topics |
 

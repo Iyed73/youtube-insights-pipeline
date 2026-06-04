@@ -1,17 +1,3 @@
-"""Channel Discovery — The Scout.
-
-Intended to run every few hours (via Airflow).  For each channel in
-``config/channels.yaml``:
-
-  1. Fetch all videos published within the last ``VIDEO_LOOKBACK_DAYS`` days.
-  2. Rank by view count; keep the top ``MAX_VIDEOS_PER_CHANNEL``.
-  3. Compare the top-N set against what is currently tracked in Postgres.
-  4. Publish newly discovered videos to the ``channel-discovery`` Kafka topic.
-  5. Upsert each new video into Postgres so ``comment_poller`` can pick it up.
-
-This service only decides *what* to track — it never polls comments.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -72,10 +58,8 @@ def run() -> None:
             channel_name: str = ch["name"]
             logger.info("Discovering videos for channel: %s (%s)", channel_name, channel_id)
 
-            # Get all currently active videos for this channel, oldest first.
             active_videos = get_active_videos_for_channel(conn, channel_id)
 
-            # Evict videos older than the lookback window.
             stale = [v for v in active_videos if v.published_at < published_after]
             if stale:
                 mark_videos_removed(conn, [v.video_id for v in stale])
@@ -85,7 +69,6 @@ def run() -> None:
                     lookback_days,
                 )
 
-            # Remaining active videos after stale eviction (still oldest-first).
             remaining = [v for v in active_videos if v not in stale]
             remaining_ids = {v.video_id for v in remaining}
 
@@ -122,11 +105,10 @@ def run() -> None:
                     )
                     logger.info("  + %s  (%d views)", video.video_id, video.view_count)
 
-            # Enforce the per-channel cap: remove oldest until we're at or below the limit.
             total_active = len(remaining) + len(new_videos)
             if total_active > max_tracked:
                 excess = total_active - max_tracked
-                # remaining is oldest-first; trim from the front.
+                # remaining is oldest-first, so this drops the oldest videos.
                 to_cap = [v.video_id for v in remaining[:excess]]
                 mark_videos_removed(conn, to_cap)
                 logger.info(

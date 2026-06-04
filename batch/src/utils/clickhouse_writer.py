@@ -1,68 +1,54 @@
 from __future__ import annotations
 
 import clickhouse_connect
-from clickhouse_connect.driver.client import Client
 
-from utils.config import BatchConfig
+from utils.config import ClickHouseConfig
+from utils.topics import LdaResult
+
+_TOPIC_SUMMARY = "analytics.topic_summary"
+_TOPIC_WORDS = "analytics.topic_words"
+_SUMMARY_COLUMNS = [
+    "run_id", "run_date", "topic_id", "topic_label", "avg_satisfaction", "video_count",
+]
+_WORDS_COLUMNS = ["run_id", "run_date", "topic_id", "topic_label", "word", "weight"]
 
 
 class ClickHouseWriter:
-    """Manages ClickHouse table creation and batch inserts for pipeline results."""
-
-    def __init__(self, cfg: BatchConfig) -> None:
-        self._client: Client = clickhouse_connect.get_client(
-            host=cfg.clickhouse_host,
-            port=cfg.clickhouse_http_port,
-            username=cfg.clickhouse_user,
-            password=cfg.clickhouse_password,
+    def __init__(self, cfg: ClickHouseConfig) -> None:
+        self._client = clickhouse_connect.get_client(
+            host=cfg.host, port=cfg.port, username=cfg.user, password=cfg.password
         )
 
-    def ensure_tables(self) -> None:
-        """Create batch tables if they don't already exist."""
-        self._client.command("""
-            CREATE TABLE IF NOT EXISTS analytics.topic_summary (
-                run_id           String,
-                run_date         DateTime,
-                topic_id         UInt8,
-                topic_label      String DEFAULT '',
-                avg_satisfaction Float32,
-                video_count      UInt32
-            ) ENGINE = MergeTree()
-            ORDER BY (topic_id)
-        """)
-        self._client.command("""
-            CREATE TABLE IF NOT EXISTS analytics.topic_words (
-                run_id      String,
-                run_date    DateTime,
-                topic_id    UInt8,
-                topic_label String DEFAULT '',
-                word        String,
-                weight      Float32
-            ) ENGINE = MergeTree()
-            ORDER BY (topic_id, weight)
-        """)
+    def publish(self, result: LdaResult, labels: dict[int, str]) -> None:
+        summary_rows = [
+            [
+                result.run_id, result.run_date, topic.topic_id, labels[topic.topic_id],
+                topic.avg_satisfaction, topic.video_count,
+            ]
+            for topic in result.topics
+        ]
+        word_rows = [
+            [
+                result.run_id, result.run_date, topic.topic_id, labels[topic.topic_id],
+                word.word, word.weight,
+            ]
+            for topic in result.topics
+            for word in topic.words
+        ]
+        summary_staging = self._stage(_TOPIC_SUMMARY, _SUMMARY_COLUMNS, summary_rows)
+        words_staging = self._stage(_TOPIC_WORDS, _WORDS_COLUMNS, word_rows)
 
-    def delete_previous_runs(self) -> None:
-        """Delete all existing batch results so the new run fully replaces them."""
-        self._client.command("TRUNCATE TABLE analytics.topic_summary")
-        self._client.command("TRUNCATE TABLE analytics.topic_words")
+        # Swapping in fully written staging tables means dashboards never see a
+        # half-written table; afterwards the staging tables hold the previous run.
+        self._client.command(f"EXCHANGE TABLES {summary_staging} AND {_TOPIC_SUMMARY}")
+        self._client.command(f"EXCHANGE TABLES {words_staging} AND {_TOPIC_WORDS}")
+        self._client.command(f"DROP TABLE {summary_staging}")
+        self._client.command(f"DROP TABLE {words_staging}")
 
-    def write_topic_summary(self, rows: list[dict]) -> None:
-        if not rows:
-            return
-        columns = ["run_id", "run_date", "topic_id", "topic_label", "avg_satisfaction", "video_count"]
-        self._client.insert(
-            "analytics.topic_summary",
-            [[r[c] for c in columns] for r in rows],
-            column_names=columns,
-        )
-
-    def write_topic_words(self, rows: list[dict]) -> None:
-        if not rows:
-            return
-        columns = ["run_id", "run_date", "topic_id", "topic_label", "word", "weight"]
-        self._client.insert(
-            "analytics.topic_words",
-            [[r[c] for c in columns] for r in rows],
-            column_names=columns,
-        )
+    def _stage(self, table: str, columns: list[str], rows: list[list]) -> str:
+        staging = f"{table}_staging"
+        self._client.command(f"DROP TABLE IF EXISTS {staging}")
+        self._client.command(f"CREATE TABLE {staging} AS {table}")
+        if rows:
+            self._client.insert(staging, rows, column_names=columns)
+        return staging

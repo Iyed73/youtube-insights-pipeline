@@ -1,10 +1,3 @@
-"""Base Avro Kafka producer wired to Confluent Schema Registry.
-
-All producers in this package inherit from :class:`AvroKafkaProducer`, which
-handles Schema Registry negotiation, Avro serialisation, and delivery
-callbacks in one place.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -18,25 +11,10 @@ from confluent_kafka.serialization import MessageField, SerializationContext
 
 logger = logging.getLogger(__name__)
 
-# Resolve the schemas/ directory relative to this file's location so the
-# path works regardless of the working directory the process is launched from.
-# File location: ingestion/src/producers/base.py
-# schemas/       is at:   <project_root>/schemas/
 _SCHEMAS_DIR = Path(__file__).parents[3] / "schemas"
 
 
 class AvroKafkaProducer:
-    """Thin Avro-serialising producer bound to a single Kafka topic.
-
-    Parameters
-    ----------
-    topic:
-        Kafka topic name (see ``producers.topics`` for the constants).
-    schema_file:
-        Filename of the Avro schema inside the top-level ``schemas/``
-        directory (e.g. ``"raw-comments.avsc"``).
-    """
-
     def __init__(self, topic: str, schema_file: str) -> None:
         self._topic = topic
 
@@ -49,10 +27,6 @@ class AvroKafkaProducer:
         )
 
     def produce(self, key: str, value: dict) -> None:
-        """Serialise *value* with Avro and enqueue to the producer's topic.
-
-        The call is non-blocking; call :meth:`flush` to wait for delivery.
-        """
         self._producer.produce(
             topic=self._topic,
             key=key.encode(),
@@ -63,7 +37,6 @@ class AvroKafkaProducer:
         )
 
     def flush(self) -> None:
-        """Block until all enqueued messages have been delivered."""
         self._producer.flush()
 
     @staticmethod

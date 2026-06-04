@@ -1,5 +1,3 @@
-"""Shared data-transfer objects and ORM models for the ingestion package."""
-
 from __future__ import annotations
 
 import datetime
@@ -10,15 +8,8 @@ from sqlalchemy.dialects.postgresql import TIMESTAMP as PgTIMESTAMP
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
-# ---------------------------------------------------------------------------
-# YouTube API data-transfer objects (not persisted directly)
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class Video:
-    """A YouTube video returned by the YouTube Data API."""
-
     video_id: str
     channel_id: str
     title: str
@@ -28,8 +19,6 @@ class Video:
 
 @dataclass
 class Comment:
-    """A top-level comment returned by the YouTube Data API."""
-
     comment_id: str
     video_id: str
     channel_id: str
@@ -41,18 +30,11 @@ class Comment:
     updated_at: datetime.datetime
 
 
-# ---------------------------------------------------------------------------
-# SQLAlchemy ORM models
-# ---------------------------------------------------------------------------
-
-
 class Base(DeclarativeBase):
     pass
 
 
 class TrackedVideo(Base):
-    """ORM model for the tracked_videos Postgres table."""
-
     __tablename__ = "tracked_videos"
     __table_args__ = (
         CheckConstraint("status IN ('active', 'removed')", name="tracked_videos_status_check"),
@@ -76,16 +58,14 @@ class TrackedVideo(Base):
         PgTIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
     last_polled_at: Mapped[datetime.datetime | None] = mapped_column(PgTIMESTAMP(timezone=True))
+    # Wall-clock time new comments were last found; drives inactivity eviction.
     last_comment_at: Mapped[datetime.datetime | None] = mapped_column(PgTIMESTAMP(timezone=True))
-    # Newest comment published_at seen so far — used as the cutoff on the next
-    # poll so we only fetch comments published after this timestamp.
+    # published_at of the newest comment seen; the cutoff for the next poll.
     comment_cursor: Mapped[datetime.datetime | None] = mapped_column(PgTIMESTAMP(timezone=True))
     status: Mapped[str] = mapped_column(String(10), nullable=False, default="active")
 
 
 class DownloadedVideo(Base):
-    """ORM model for the downloaded_videos Postgres table."""
-
     __tablename__ = "downloaded_videos"
     __table_args__ = (
         CheckConstraint(

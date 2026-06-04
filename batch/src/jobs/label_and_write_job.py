@@ -1,93 +1,54 @@
-"""
-Label and Write Job
-===================
-Step 3 of the batch pipeline (DAG task: label_and_write).
-
-Reads the LDA output JSON written to MinIO by lda_job, calls the Claude
-API to generate a short human-readable label for each topic, patches those
-labels into the pre-extracted result rows, then writes everything to
-ClickHouse.
-
-No Spark session required — this job is pure Python (Claude API + ClickHouse).
-"""
-
 from __future__ import annotations
 
+import argparse
+import sys
 import time
-from datetime import datetime
 
 from utils.clickhouse_writer import ClickHouseWriter
-from utils.config import BatchConfig
-from utils.lda_store import LdaStore
+from utils.config import ClickHouseConfig, LabelingConfig, MinioConfig
+from utils.lda_store import LdaResultStore
 from utils.topic_labeler import label_topics
-from utils.transcribe import MinioCfg
 
 
 class LabelAndWriteJob:
-    def __init__(self, cfg: BatchConfig) -> None:
-        self._cfg = cfg
+    def __init__(self, run_id: str) -> None:
+        self._run_id = run_id
+        self._minio_cfg = MinioConfig.from_env()
+        self._clickhouse_cfg = ClickHouseConfig.from_env()
+        self._labeling_cfg = LabelingConfig.from_env()
 
-    def run(self) -> None:
+    def run(self) -> int:
         print("=== Label and Write Job ===")
 
-        minio_cfg = MinioCfg(
-            endpoint=self._cfg.minio_endpoint,
-            access_key=self._cfg.minio_access_key,
-            secret_key=self._cfg.minio_secret_key,
-            bucket=self._cfg.minio_bucket,
-        )
+        print("\n[Step 1/3] Loading LDA result from MinIO...")
+        result = LdaResultStore(self._minio_cfg).load(self._run_id)
+        print(f"  run_id:   {result.run_id}")
+        print(f"  run_date: {result.run_date}")
+        print(f"  topics:   {len(result.topics)}")
 
-        # ── Step 1: Load LDA output from MinIO ────────────────────────────
-        print("\n[Step 1/3] Loading LDA output from MinIO...")
-        store = LdaStore(minio_cfg)
-        data = store.load()
-
-        run_id: str = data["run_id"]
-        # run_date was serialised to ISO string — restore to datetime for ClickHouse.
-        run_date: datetime = datetime.fromisoformat(data["run_date"])
-        topic_words_map: dict[int, list[str]] = data["topic_words_map"]
-        topic_summary: list[dict] = data["topic_summary"]
-        topic_words: list[dict] = data["topic_words"]
-
-        print(f"  run_id:   {run_id}")
-        print(f"  run_date: {run_date}")
-        print(f"  topics:   {len(topic_words_map)}")
-
-        # ── Step 2: Label topics via Claude ───────────────────────────────
-        print("\n[Step 2/3] Labeling topics via Claude API...")
+        print(f"\n[Step 2/3] Labeling topics via Claude ({self._labeling_cfg.model})...")
         t0 = time.time()
-        labels = label_topics(self._cfg.anthropic_api_key, topic_words_map)
-        for tid, label in sorted(labels.items()):
-            print(f"  Topic {tid}: {label}")
+        labels = label_topics(self._labeling_cfg, result.topics)
+        for topic_id, label in sorted(labels.items()):
+            print(f"  Topic {topic_id}: {label}")
         print(f"  Done in {time.time() - t0:.1f}s.")
 
-        # Patch labels and restore run_date (was serialised to string by JSON).
-        for row in topic_summary:
-            row["topic_label"] = labels.get(row["topic_id"], "")
-            row["run_date"] = run_date
-        for row in topic_words:
-            row["topic_label"] = labels.get(row["topic_id"], "")
-            row["run_date"] = run_date
-
-        # ── Step 3: Write to ClickHouse ───────────────────────────────────
         print("\n[Step 3/3] Writing results to ClickHouse...")
         t0 = time.time()
-        writer = ClickHouseWriter(self._cfg)
-        writer.ensure_tables()
-        writer.delete_previous_runs()
-        writer.write_topic_summary(topic_summary)
-        writer.write_topic_words(topic_words)
-        print(
-            f"  Wrote {len(topic_summary)} topic_summary and {len(topic_words)} topic_words "
-            f"in {time.time() - t0:.1f}s."
-        )
+        ClickHouseWriter(self._clickhouse_cfg).publish(result, labels)
+        print(f"  Published {len(result.topics)} topic(s) in {time.time() - t0:.1f}s.")
 
         print("\n=== Label and write complete ===")
+        return 0
 
 
-def main() -> None:
-    LabelAndWriteJob(BatchConfig()).run()
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Label LDA topics and publish them.")
+    parser.add_argument(
+        "--run-id", required=True, help="Pipeline run id of the LDA result to publish."
+    )
+    return LabelAndWriteJob(parser.parse_args().run_id).run()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

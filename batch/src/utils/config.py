@@ -1,56 +1,93 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
-@dataclass
-class BatchConfig:
-    # PostgreSQL (ingestion DB)
-    postgres_host: str = field(default_factory=lambda: os.environ["POSTGRES_HOST"])
-    postgres_port: int = field(default_factory=lambda: int(os.environ.get("POSTGRES_PORT", "5432")))
-    postgres_user: str = field(default_factory=lambda: os.environ["POSTGRES_USER"])
-    postgres_password: str = field(default_factory=lambda: os.environ["POSTGRES_PASSWORD"])
-    ingestion_db: str = field(default_factory=lambda: os.environ.get("INGESTION_DB", "ingestion"))
+@dataclass(frozen=True)
+class PostgresConfig:
+    host: str
+    port: int
+    user: str
+    password: str
+    database: str
 
-    # MinIO
-    minio_endpoint: str = field(default_factory=lambda: os.environ["MINIO_ENDPOINT"])
-    minio_access_key: str = field(default_factory=lambda: os.environ["MINIO_ACCESS_KEY"])
-    minio_secret_key: str = field(default_factory=lambda: os.environ["MINIO_SECRET_KEY"])
-    minio_bucket: str = field(default_factory=lambda: os.environ.get("MINIO_VIDEOS_BUCKET", "videos"))
+    @classmethod
+    def from_env(cls) -> PostgresConfig:
+        return cls(
+            host=os.environ["POSTGRES_HOST"],
+            port=int(os.environ.get("POSTGRES_PORT", "5432")),
+            user=os.environ["POSTGRES_USER"],
+            password=os.environ["POSTGRES_PASSWORD"],
+            database=os.environ.get("INGESTION_DB", "ingestion"),
+        )
 
-    # ClickHouse
-    clickhouse_host: str = field(default_factory=lambda: os.environ["CLICKHOUSE_HOST"])
-    clickhouse_http_port: int = field(
-        default_factory=lambda: int(os.environ.get("CLICKHOUSE_HTTP_PORT", "8123"))
-    )
-    clickhouse_user: str = field(default_factory=lambda: os.environ["CLICKHOUSE_USER"])
-    clickhouse_password: str = field(default_factory=lambda: os.environ["CLICKHOUSE_PASSWORD"])
 
-    # Spark
-    spark_master: str = field(
-        default_factory=lambda: os.environ.get("SPARK_MASTER", "spark://spark-master:7077")
-    )
+@dataclass(frozen=True)
+class MinioConfig:
+    endpoint: str
+    access_key: str
+    secret_key: str
+    bucket: str
 
-    # Whisper
-    whisper_model: str = field(default_factory=lambda: os.environ.get("WHISPER_MODEL", "base"))
+    @classmethod
+    def from_env(cls) -> MinioConfig:
+        return cls(
+            endpoint=os.environ["MINIO_ENDPOINT"],
+            access_key=os.environ["MINIO_ACCESS_KEY"],
+            secret_key=os.environ["MINIO_SECRET_KEY"],
+            bucket=os.environ.get("MINIO_VIDEOS_BUCKET", "videos"),
+        )
 
-    # LDA
-    lda_max_topics: int = field(
-        default_factory=lambda: int(os.environ.get("LDA_MAX_TOPICS", "20"))
-    )
-    lda_max_iter: int = field(
-        default_factory=lambda: int(os.environ.get("LDA_MAX_ITER", "30"))
-    )
 
-    # Claude API (topic labeling)
-    anthropic_api_key: str = field(
-        default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY", "")
-    )
+@dataclass(frozen=True)
+class ClickHouseConfig:
+    host: str
+    port: int
+    user: str
+    password: str
 
-    @property
-    def postgres_url(self) -> str:
-        return (
-            f"postgresql+psycopg2://{self.postgres_user}:{self.postgres_password}"
-            f"@{self.postgres_host}:{self.postgres_port}/{self.ingestion_db}"
+    @classmethod
+    def from_env(cls) -> ClickHouseConfig:
+        return cls(
+            host=os.environ["CLICKHOUSE_HOST"],
+            port=int(os.environ.get("CLICKHOUSE_HTTP_PORT", "8123")),
+            user=os.environ["CLICKHOUSE_USER"],
+            password=os.environ["CLICKHOUSE_PASSWORD"],
+        )
+
+
+@dataclass(frozen=True)
+class WhisperConfig:
+    # Set by infra/spark/Dockerfile to the model baked into the image.
+    model_size: str
+
+    @classmethod
+    def from_env(cls) -> WhisperConfig:
+        return cls(model_size=os.environ["WHISPER_MODEL"])
+
+
+@dataclass(frozen=True)
+class LdaConfig:
+    max_topics: int
+    max_iter: int
+
+    @classmethod
+    def from_env(cls) -> LdaConfig:
+        return cls(
+            max_topics=int(os.environ.get("LDA_MAX_TOPICS", "20")),
+            max_iter=int(os.environ.get("LDA_MAX_ITER", "30")),
+        )
+
+
+@dataclass(frozen=True)
+class LabelingConfig:
+    api_key: str
+    model: str
+
+    @classmethod
+    def from_env(cls) -> LabelingConfig:
+        return cls(
+            api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
+            model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
         )

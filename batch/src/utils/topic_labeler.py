@@ -1,31 +1,34 @@
 from __future__ import annotations
 
 import anthropic
+from pydantic import BaseModel
+
+from utils.config import LabelingConfig
+from utils.topics import Topic
 
 
-def label_topics(api_key: str, topic_words: dict[int, list[str]]) -> dict[int, str]:
-    """Send each topic's top words to Claude and return a short label per topic.
+class _TopicLabel(BaseModel):
+    topic_id: int
+    label: str
 
-    Args:
-        api_key: Anthropic API key.
-        topic_words: Mapping of topic_id -> list of top words.
 
-    Returns:
-        Mapping of topic_id -> short human-readable label.
-    """
-    if not api_key:
-        print("  [label] ANTHROPIC_API_KEY not set — skipping topic labeling")
-        return {tid: f"Topic {tid}" for tid in topic_words}
+class _TopicLabels(BaseModel):
+    labels: list[_TopicLabel]
 
-    client = anthropic.Anthropic(api_key=api_key)
+
+def label_topics(cfg: LabelingConfig, topics: list[Topic]) -> dict[int, str]:
+    labels = {topic.topic_id: f"Topic {topic.topic_id}" for topic in topics}
+    if not cfg.api_key:
+        print("  [label] ANTHROPIC_API_KEY not set — using generic topic labels")
+        return labels
 
     topics_text = "\n".join(
-        f"Topic {tid}: {', '.join(words)}" for tid, words in sorted(topic_words.items())
+        f"Topic {topic.topic_id}: {', '.join(word.word for word in topic.words)}"
+        for topic in topics
     )
-
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=256,
+    response = anthropic.Anthropic(api_key=cfg.api_key).messages.parse(
+        model=cfg.model,
+        max_tokens=4096,
         messages=[
             {
                 "role": "user",
@@ -33,31 +36,23 @@ def label_topics(api_key: str, topic_words: dict[int, list[str]]) -> dict[int, s
                     "Below are topics from an LDA model run on YouTube video transcripts. "
                     "Each topic is represented by its top keywords.\n\n"
                     f"{topics_text}\n\n"
-                    "For each topic, reply with ONLY a short label (2-5 words) that captures "
-                    "the theme. Format: one line per topic, exactly like:\n"
-                    "0: Label Here\n"
-                    "1: Another Label\n"
-                    "No extra text."
+                    "Give each topic a short label (2-5 words) that captures its theme."
                 ),
             }
         ],
+        output_format=_TopicLabels,
     )
+    if response.stop_reason != "end_turn" or response.parsed_output is None:
+        raise RuntimeError(
+            f"Topic labeling did not complete (stop_reason={response.stop_reason!r})"
+        )
 
-    labels = {}
-    for line in message.content[0].text.strip().splitlines():
-        line = line.strip()
-        if not line or ":" not in line:
-            continue
-        tid_str, label = line.split(":", 1)
-        try:
-            tid = int(tid_str.strip())
-            labels[tid] = label.strip()
-        except ValueError:
-            continue
-
-    # Fill in any missing topics
-    for tid in topic_words:
-        if tid not in labels:
-            labels[tid] = f"Topic {tid}"
-
-    return labels
+    labeled = {
+        item.topic_id: item.label
+        for item in response.parsed_output.labels
+        if item.topic_id in labels
+    }
+    missing = sorted(labels.keys() - labeled.keys())
+    if missing:
+        print(f"  [label] no label returned for topic(s) {missing} — using generic labels")
+    return {**labels, **labeled}

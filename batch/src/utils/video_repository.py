@@ -1,25 +1,38 @@
 from __future__ import annotations
 
-from sqlalchemy import create_engine, text
+from dataclasses import dataclass
 
-from utils.config import BatchConfig
+from sqlalchemy import URL, create_engine, text
+
+from utils.config import PostgresConfig
 
 
-class VideoRepository:
-    """Read-only access to downloaded video records in PostgreSQL."""
+@dataclass(frozen=True)
+class DownloadedVideo:
+    video_id: str
+    channel_id: str
+    minio_path: str
+    satisfaction_pct: float
 
-    def __init__(self, cfg: BatchConfig) -> None:
-        self._engine = create_engine(cfg.postgres_url)
 
-    def get_downloaded_videos(self) -> list[dict]:
-        """Return all successfully downloaded videos with their channel names."""
-        sql = text("""
-            SELECT dv.video_id, dv.channel_id, dv.title, dv.minio_path, dv.satisfaction_pct,
-                   tv.channel_name
-            FROM downloaded_videos dv
-            LEFT JOIN tracked_videos tv ON dv.video_id = tv.video_id
-            WHERE dv.status = 'completed'
-        """)
-        with self._engine.connect() as conn:
-            rows = conn.execute(sql)
-            return [dict(r._mapping) for r in rows]
+def fetch_downloaded_videos(cfg: PostgresConfig) -> list[DownloadedVideo]:
+    engine = create_engine(
+        URL.create(
+            "postgresql+psycopg2",
+            username=cfg.user,
+            password=cfg.password,
+            host=cfg.host,
+            port=cfg.port,
+            database=cfg.database,
+        )
+    )
+    sql = text("""
+        SELECT video_id, channel_id, minio_path, satisfaction_pct
+        FROM downloaded_videos
+        WHERE status = 'completed'
+    """)
+    try:
+        with engine.connect() as conn:
+            return [DownloadedVideo(**row._mapping) for row in conn.execute(sql)]
+    finally:
+        engine.dispose()

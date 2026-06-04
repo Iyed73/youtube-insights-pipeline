@@ -21,7 +21,7 @@ The batch layer complements the streaming layer — streaming does real-time sen
 
 ```
 make download-videos          # downloads top-satisfaction videos to MinIO
-make run-batch                # triggers Spark pipeline
+make run-batch                # triggers the batch_topic_modeling Airflow DAG
 
 Spark Pipeline:
   Postgres (downloaded_videos)
@@ -197,12 +197,12 @@ spark-master  →  accepts spark-submit, coordinates scheduling
 spark-worker  →  executes tasks (2 cores, 2GB RAM each)
 ```
 
-The job is submitted from inside the `spark-master` container:
+Airflow submits each job from a short-lived container of the same image, which acts as the Spark driver:
 ```bash
-spark-submit --master spark://spark-master:7077 /opt/spark/work/batch/jobs/topic_modeling.py
+spark-submit --master spark://spark-master:7077 /opt/spark/work/batch/jobs/lda_job.py --run-id 20260906T000000
 ```
 
-The batch source code is mounted as a read-only volume into both containers (`../batch/src:/opt/spark/work/batch:ro`), so code changes take effect immediately without rebuilding the image.
+The batch source code is baked into the image (`infra/spark/Dockerfile`), so the driver and the executors always run the same code. After changing `batch/`, run `make build-batch` to rebuild the image and restart the cluster on it.
 
 Why Standalone over alternatives:
 
@@ -220,9 +220,8 @@ Why Standalone over alternatives:
 #### RDD — Transcription stage (`utils/transcribe.py`)
 
 ```python
-rdd = spark.sparkContext.parallelize(video_rows)   # distribute video list to workers
-transcript_rdd = rdd.mapPartitions(self)            # run Whisper on each partition
-return spark.createDataFrame(transcript_rdd)        # convert results back to DataFrame
+rdd = spark.sparkContext.parallelize(videos)                  # distribute video list to workers
+return rdd.mapPartitions(self._transcribe_partition).count()  # run Whisper on each partition
 ```
 
 **Why RDD here?**
@@ -239,9 +238,9 @@ DataFrames are for SQL-style columnar operations. They cannot run arbitrary side
 - `map`: one function call per row → Whisper model loaded **once per video** (wasteful — ~10 seconds of model loading time per video)
 - `mapPartitions`: one function call per partition → Whisper model loaded **once per partition**, shared across all videos assigned to that worker
 
-`TranscriptionStage` is designed as a picklable callable:
-- Stores only plain config values (strings) — no open connections, no model objects
-- Implements `__call__(rows)` so it works directly with `mapPartitions`
+`TranscriptionStage` is safe to ship to workers:
+- Stores only plain config values — no open connections, no model objects
+- Its `_transcribe_partition` method is the function `mapPartitions` runs on each partition
 - MinIO client and Whisper model are created fresh inside the worker (can't pickle live connections)
 
 #### DataFrame — LDA pipeline (`utils/topic_model.py`)
@@ -269,7 +268,7 @@ Spark ML exclusively uses DataFrames. They provide:
 | Operation | Driver or Workers | Distributed? |
 |-----------|------------------|-------------|
 | Postgres query (`VideoRepository`) | Driver | No |
-| `parallelize(video_rows)` | Sets up distribution | Creates partitions |
+| `parallelize(videos)` | Sets up distribution | Creates partitions |
 | `mapPartitions` — Whisper transcription | **Workers** | **Yes** |
 | `createDataFrame(transcript_rdd)` | Workers hold data | Yes |
 | Tokenize → StopWords → CountVectorize | **Workers** | **Yes** |
@@ -317,22 +316,21 @@ After a video is transcribed, the text is saved to MinIO at `{channel_id}/{video
 
 ```python
 # Check for cached transcript first
-transcript = self._get_cached(client, key)
-if transcript is not None:
-    print(f"  [cached] {row.video_id}")
-    yield self._make_row(row, transcript)
+if store.exists(key):
+    print(f"  [cached] {video.video_id}")
+    yield video.video_id
     continue
 
 # Only reach here if no cache
-transcript = self._transcribe(client, model, row.minio_path)
-self._cache(client, key, transcript)       # save to MinIO for next time
+transcript = self._transcribe(store, model, video.minio_path)
+store.write(key, transcript.encode("utf-8"), content_type="text/plain")  # cache for next time
 ```
 
 ---
 
 ### Topic Labeling with Claude
 
-After LDA runs, the top 10 words per topic are sent to Claude Haiku in a **single API call**:
+After LDA runs, the top 20 words per topic are sent to Claude in a **single API call** (`utils/topic_labeler.py`):
 
 ```
 Topic 0: another, second, keep, find, gone
@@ -340,25 +338,27 @@ Topic 1: better, plan, held, paying, protocol
 Topic 2: little, dangerous, low, see, know
 ```
 
-Claude returns one short label per topic. Haiku (`claude-haiku-4-5-20251001`) is used because:
-- Cheapest and fastest Claude model ($1/$5 per million tokens)
-- Simple classification task — no deep reasoning needed
+Claude returns one short label per topic as structured JSON output (`messages.parse` with a Pydantic model), so the reply is validated instead of parsed from free text. The model is set by `ANTHROPIC_MODEL` (default `claude-sonnet-4-6`).
 
-If `ANTHROPIC_API_KEY` is not set, fallback labels `"Topic 0"`, `"Topic 1"` are used automatically.
+If `ANTHROPIC_API_KEY` is not set, fallback labels `"Topic 0"`, `"Topic 1"` are used automatically — as they are for any topic Claude leaves out.
 
 ---
 
 ### Whisper Model Pre-baking
 
-The Whisper model is downloaded during the Docker image build (not at runtime):
+The Whisper model and the NLTK wordnet corpus (used for lemmatization) are downloaded during the Docker image build, never at runtime:
 
 ```dockerfile
-ENV HF_HOME=/opt/spark/hf_cache
-RUN python3 -c "from faster_whisper import WhisperModel; WhisperModel('base', device='cpu', compute_type='int8')"
-RUN chmod -R a+rX /opt/spark/hf_cache
+ARG WHISPER_MODEL=base
+ENV WHISPER_MODEL=${WHISPER_MODEL} \
+    HF_HOME=/opt/spark/hf_cache \
+    NLTK_DATA=/opt/spark/nltk_data
+RUN python3 -c "from faster_whisper import download_model; download_model('${WHISPER_MODEL}')" \
+    && python3 -m nltk.downloader -d "${NLTK_DATA}" wordnet \
+    && chmod -R a+rX "${HF_HOME}" "${NLTK_DATA}"
 ```
 
-`HF_HOME` is set as a Docker `ENV` so it's available both at build time and at runtime when the Spark worker executes. Without this, `huggingface_hub` tries to write to the `spark` user's home (`/nonexistent`) and fails with a permission error.
+`HF_HOME` and `NLTK_DATA` are Docker `ENV`s, so they apply both at build time and when the jobs run. The `spark` user has no home directory (`/nonexistent`), so the caches live under `/opt/spark` and are made world-readable. Jobs load the model with `local_files_only=True`; to use another model size, set `WHISPER_MODEL` in `.env` and rerun `make build-batch`.
 
 ---
 
@@ -394,16 +394,18 @@ RUN chmod -R a+rX /opt/spark/hf_cache
 
 ### Configuration Reference
 
-All config is read from environment variables in `BatchConfig`:
+Config is read from environment variables; each job loads only the sections it needs (`utils/config.py`):
 
 | Env var | Default | Description |
 |---------|---------|-------------|
-| `WHISPER_MODEL` | `base` | Whisper model size (base/small/medium/large) |
-| `LDA_MAX_TOPICS` | `10` | Max number of LDA topics |
-| `LDA_MAX_ITER` | `20` | LDA EM iterations |
+| `WHISPER_MODEL` | `base` | Whisper model size baked into the image (build arg) |
+| `LDA_MAX_TOPICS` | `20` | Max number of LDA topics |
+| `LDA_MAX_ITER` | `30` | LDA iterations |
 | `ANTHROPIC_API_KEY` | `` | Claude API key for topic labeling |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-6` | Claude model for topic labeling |
 | `VIDEO_MAX_DURATION_SEC` | `600` | Max seconds to download per video (10 min) |
-| `SPARK_MASTER` | `spark://spark-master:7077` | Spark master URL |
+
+The Spark master URL comes from `spark-submit --master` in the DAG.
 
 ---
 

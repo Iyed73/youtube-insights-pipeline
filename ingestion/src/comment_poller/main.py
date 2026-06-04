@@ -1,24 +1,11 @@
-"""Comment Poller — The Hot Loop.
-
-Intended to run every few minutes (via Airflow).  For each active tracked
-video in Postgres:
-
-  1. Fetch all top-level comments published after ``last_polled_at`` (newest
-     first, paginating until we reach already-seen comments).
-  2. Publish each new comment to the ``raw-comments`` Kafka topic.
-  3. Advance ``last_polled_at`` (and ``last_comment_at`` when new comments
-     were found) in Postgres.
-  4. Evict videos that have been silent for longer than
-     ``COMMENT_INACTIVITY_HOURS`` — mark them ``removed`` so they are
-     excluded from future polls.
-
-This service only polls comments — it never decides which videos to track.
-"""
-
 from __future__ import annotations
 
+import argparse
 import logging
 import os
+import signal
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
@@ -60,13 +47,6 @@ def _poll_video(
     polled_at: datetime,
     max_comments: int,
 ) -> tuple[int, datetime | None]:
-    """Fetch and publish comments newer than *cutoff* for one video.
-
-    The YouTube API returns comments newest-first.  We collect all new
-    comments across pages and publish them in that order.
-
-    Returns (total comments published, newest comment's published_at or None).
-    """
     collected: list[Comment] = []
     page_token: str | None = None
 
@@ -76,14 +56,12 @@ def _poll_video(
         new_comments = [c for c in comments if c.published_at > cutoff]
         collected.extend(new_comments)
 
-        # Stop paginating once we've hit comments older than the cutoff, or
-        # when the API has no more pages to offer.
+        # Comments come newest-first, so a partially new page means we reached the cutoff.
         if len(new_comments) < len(comments) or not next_token:
             break
 
         page_token = next_token
 
-    # Trim to cap, keeping the most recent ones.
     collected = collected[:max_comments]
 
     newest_comment_at: datetime | None = None
@@ -95,24 +73,18 @@ def _poll_video(
     return len(collected), newest_comment_at
 
 
-def run() -> None:
+def poll_once(yt: YouTubeClient, producer: AvroKafkaProducer) -> None:
     inactivity_hours = int(os.environ.get("COMMENT_INACTIVITY_HOURS", 24))
     inactivity_threshold = datetime.now(timezone.utc) - timedelta(hours=inactivity_hours)
     max_comments = int(os.environ.get("MAX_COMMENTS_PER_POLL", 2000))
 
-    yt = YouTubeClient(os.environ["YOUTUBE_API_KEY"])
     conn = get_session()
-    producer = AvroKafkaProducer(RAW_COMMENTS_TOPIC, "raw-comments.avsc")
-
     try:
         active_videos = get_active_videos(conn)
         logger.info("Polling %d active video(s).", len(active_videos))
 
         for video in active_videos:
             polled_at = datetime.now(timezone.utc)
-            # Only ingest comments newer than the last successful poll.
-            # On first poll (last_polled_at is None), fall back to published_at
-            # so we backfill all comments since the video went live.
             cutoff = video.comment_cursor or video.published_at
 
             logger.info("Polling %s — %s", video.video_id, video.title[:70])
@@ -129,7 +101,6 @@ def run() -> None:
                 logger.info("  → %d new comment(s) published.", new_count)
             else:
                 update_video_poll(conn, video.video_id, polled_at)
-                # Evict the video if it has been silent for too long.
                 last_active = video.last_comment_at or video.added_at
                 if last_active < inactivity_threshold:
                     mark_video_removed(conn, video.video_id)
@@ -143,5 +114,33 @@ def run() -> None:
         conn.close()
 
 
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Poll YouTube comments for active tracked videos.")
+    parser.add_argument(
+        "--interval",
+        type=float,
+        metavar="SECONDS",
+        help="Keep polling, starting a pass every SECONDS. Without it, run one pass and exit.",
+    )
+    args = parser.parse_args()
+
+    yt = YouTubeClient(os.environ["YOUTUBE_API_KEY"])
+    producer = AvroKafkaProducer(RAW_COMMENTS_TOPIC, "raw-comments.avsc")
+
+    if args.interval is None:
+        poll_once(yt, producer)
+        return
+
+    # On `docker stop`, finish the pass in progress (so its comments are flushed
+    # to Kafka before the cursors it advanced are relied on) instead of dying mid-pass.
+    stop = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_: stop.set())
+    while not stop.is_set():
+        started = time.monotonic()
+        poll_once(yt, producer)
+        stop.wait(max(0.0, args.interval - (time.monotonic() - started)))
+    logger.info("Comment poller stopped.")
+
+
 if __name__ == "__main__":
-    run()
+    main()

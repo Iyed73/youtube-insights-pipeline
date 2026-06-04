@@ -11,17 +11,8 @@ import java.nio.LongBuffer;
 import java.nio.file.Paths;
 import java.util.Map;
 
-/**
- * Runs cardiffnlp/twitter-roberta-base-sentiment inference via DJL tokenizer
- * and ONNX Runtime Java API.
- *
- * DJL's TextClassificationTranslatorFactory creates uint32 tensors internally,
- * which OrtUtils does not support.  This class bypasses DJL's translator and
- * calls the ONNX Runtime Java API directly with explicit int64 (LongBuffer)
- * tensors
- *
- * Labels: 0 = Negative, 1 = Neutral, 2 = Positive
- */
+// Calls ONNX Runtime directly with int64 tensors: DJL's TextClassificationTranslatorFactory
+// creates uint32 tensors, which OrtUtils does not support.
 public class RobertaSentimentAnalyzer implements AutoCloseable {
 
     private static final Map<Integer, String> LABELS = Map.of(
@@ -37,9 +28,7 @@ public class RobertaSentimentAnalyzer implements AutoCloseable {
         var dir      = Paths.get(modelDir);
         this.env     = OrtEnvironment.getEnvironment();
 
-        // Explicitly limit ONNX Runtime thread pools to avoid saturating all CPU cores.
-        // OMP_NUM_THREADS alone is not sufficient — SessionOptions controls the runtime's
-        // own intra-op and inter-op thread pools independently of OpenMP.
+        // ONNX Runtime's own thread pools ignore OMP_NUM_THREADS, so cap them explicitly.
         int threads = Integer.parseInt(System.getenv().getOrDefault("OMP_NUM_THREADS", "2"));
         OrtSession.SessionOptions opts = new OrtSession.SessionOptions();
         opts.setIntraOpNumThreads(threads);

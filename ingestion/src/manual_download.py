@@ -1,16 +1,3 @@
-"""
-Manual Video Downloader
-=======================
-Download specific YouTube videos by URL, upload to MinIO, and register
-them in Postgres with a random satisfaction score (50–70%).
-
-Usage:
-    python manual_download.py <url1> [url2 ...]
-
-Example:
-    python manual_download.py https://www.youtube.com/watch?v=dQw4w9WgXcQ
-"""
-
 from __future__ import annotations
 
 import os
@@ -26,10 +13,7 @@ from minio import Minio
 import db
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
 def _extract_video_id(url: str) -> str:
-    """Extract the video ID from a YouTube URL."""
     patterns = [
         r"(?:v=|youtu\.be/|shorts/)([A-Za-z0-9_-]{11})",
     ]
@@ -41,7 +25,6 @@ def _extract_video_id(url: str) -> str:
 
 
 def _fetch_video_title(url: str) -> str:
-    """Use yt-dlp to fetch the video title without downloading."""
     with yt_dlp.YoutubeDL({"quiet": True, "skip_download": True}) as ydl:
         info = ydl.extract_info(url, download=False)
         return info.get("title") or url
@@ -65,7 +48,6 @@ def _progress_hook(d: dict) -> None:
 
 
 def _download_and_upload(video_id: str, channel_id: str, url: str, minio_client: Minio, bucket: str) -> str:
-    """Download video via yt-dlp and upload to MinIO. Returns the MinIO path."""
     minio_path = f"{channel_id}/{video_id}.mp4"
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -93,8 +75,6 @@ def _download_and_upload(video_id: str, channel_id: str, url: str, minio_client:
 
     return minio_path
 
-
-# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main(urls: list[str]) -> None:
     minio_endpoint  = os.environ["MINIO_ENDPOINT"]

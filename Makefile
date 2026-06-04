@@ -1,26 +1,3 @@
-## ─────────────────────────────────────────────────────────────────────────────
-## YouTube Trend Analysis Pipeline — developer targets
-##
-## Prerequisites
-##   • Docker running with infra services started
-##   • .env file present (copy from .env.example and fill in YOUTUBE_API_KEY)
-##   • Python 3.11–3.13  (ingestion + model export)
-##   • Java 11+ and Maven (streaming)
-##
-## Quick start — ingestion
-##   make install          # create venv + install ingestion package
-##   make migrate          # create tracked_videos table in Postgres
-##   make register-schemas # push Avro schemas to Schema Registry
-##   make discover         # run channel discovery once
-##   make poll             # run comment poller once
-##
-## Quick start — streaming
-##   make export-model     # download + export RoBERTa to ONNX (one-time, needs Python ≤ 3.13)
-##   make build-streaming  # compile Flink fat JAR
-##   make submit-job       # copy JAR into Flink container and submit the job
-##   make stop-job         # cancel the running sentiment job
-## ─────────────────────────────────────────────────────────────────────────────
-
 SHELL        := /bin/bash
 ENV_FILE     ?= .env
 VENV         := ingestion/.venv
@@ -31,11 +8,11 @@ SRC          := ingestion/src
 STREAMING_JAR := streaming/target/streaming-0.1.0.jar
 MODEL_DIR     := models/twitter-roberta-sentiment
 
-COMPOSE := $(COMPOSE) --env-file $(ENV_FILE)
+COMPOSE := docker compose -f infra/docker-compose.yml --env-file $(ENV_FILE)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install migrate register-schemas discover poll \
+.PHONY: help install create-topics migrate register-schemas discover poll \
         export-model build-streaming submit-job stop-job \
         download-videos build-airflow build-ingestion build-batch run-batch
 
@@ -43,15 +20,11 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-# ── Python environment ────────────────────────────────────────────────────────
-
 install: ## Create virtualenv and install ingestion dependencies
 	python3 -m venv $(VENV)
 	$(PIP) install --quiet --upgrade pip
 	$(PIP) install --quiet -e ingestion/
 	@echo "✓ Virtualenv ready at $(VENV)"
-
-# ── Infrastructure ────────────────────────────────────────────────────────────
 
 create-topics: ## Create Kafka topics (must run before discover/poll)
 	@set -a && . $(ENV_FILE) && set +a && \
@@ -76,8 +49,6 @@ register-schemas: ## Register Avro schemas with Schema Registry
 	@set -a && . $(ENV_FILE) && set +a && \
 	PYTHONPATH=$(SRC) $(PY) scripts/register_schemas.py
 
-# ── Ingestion services ────────────────────────────────────────────────────────
-
 discover: ## Run channel_discovery once: fetch top videos per channel → Kafka
 	@set -a && . $(ENV_FILE) && set +a && \
 	PYTHONPATH=$(SRC) $(PY) -m channel_discovery.main
@@ -89,8 +60,6 @@ poll: ## Run comment_poller once: fetch new comments per active video → Kafka
 download-videos: ## Download top-satisfaction videos to MinIO (last DOWNLOAD_LOOKBACK_DAYS days)
 	@set -a && . $(ENV_FILE) && set +a && \
 	PYTHONPATH=$(SRC) $(PY) -m video_downloader.main
-
-# ── Streaming (Flink + RoBERTa) ───────────────────────────────────────────────
 
 export-model: ## Export RoBERTa to ONNX (one-time, requires Python ≤ 3.13)
 	@echo "Installing optimum + transformers..."
@@ -125,46 +94,19 @@ stop-job: ## Cancel the running sentiment Flink job
 		echo "✓ Cancelled job $$JOB_ID"; \
 	fi
 
-# ── Batch (PySpark + Whisper) ────────────────────────────────────────────
-
 build-airflow: ## Build custom Airflow image with Docker provider pre-installed
 	$(COMPOSE) build airflow-webserver
 	@echo "✓ Airflow image built as youtube-insights/airflow:latest"
 
-build-ingestion: ## Build custom ingestion image (yt-dlp, ffmpeg, all ingestion deps)
-	$(COMPOSE) --profile tools build ingestion-base
+build-ingestion: ## Build the ingestion image (comment-poller service and ingestion Airflow tasks)
+	$(COMPOSE) build comment-poller
 	@echo "✓ Ingestion image built as youtube-insights/ingestion:latest"
 
-build-batch: ## Build custom Spark image with batch dependencies (faster-whisper, etc.)
+build-batch: ## Build the Spark image (deps, models, job code) and restart the Spark cluster on it
 	$(COMPOSE) build spark-master spark-worker
-	@echo "✓ Spark images built with batch dependencies"
+	$(COMPOSE) up -d spark-master spark-worker
+	@echo "✓ Spark image built — spark-master and spark-worker now run the new code"
 
-run-batch: ## Run the topic-modeling batch pipeline (transcribe + LDA)
-	@set -a && . $(ENV_FILE) && set +a && \
-	docker exec \
-		-e POSTGRES_HOST=postgres \
-		-e POSTGRES_PORT=5432 \
-		-e POSTGRES_USER=$$POSTGRES_USER \
-		-e POSTGRES_PASSWORD=$$POSTGRES_PASSWORD \
-		-e INGESTION_DB=$$INGESTION_DB \
-		-e MINIO_ENDPOINT=minio:9000 \
-		-e MINIO_ACCESS_KEY=$$MINIO_ACCESS_KEY \
-		-e MINIO_SECRET_KEY=$$MINIO_SECRET_KEY \
-		-e MINIO_VIDEOS_BUCKET=$${MINIO_VIDEOS_BUCKET:-videos} \
-		-e CLICKHOUSE_HOST=clickhouse \
-		-e CLICKHOUSE_HTTP_PORT=8123 \
-		-e CLICKHOUSE_USER=$$CLICKHOUSE_USER \
-		-e CLICKHOUSE_PASSWORD=$$CLICKHOUSE_PASSWORD \
-		-e SPARK_MASTER=spark://spark-master:7077 \
-		-e WHISPER_MODEL=$${WHISPER_MODEL:-base} \
-		-e LDA_NUM_TOPICS=$${LDA_NUM_TOPICS:-5} \
-		-e LDA_MAX_ITER=$${LDA_MAX_ITER:-20} \
-		-e ANTHROPIC_API_KEY=$$ANTHROPIC_API_KEY \
-		-e PYTHONPATH=/opt/spark/work/batch \
-		spark-master \
-		/opt/spark/bin/spark-submit \
-			--master spark://spark-master:7077 \
-			--conf spark.pyspark.python=python3 \
-			--conf spark.executorEnv.PYTHONPATH=/opt/spark/work/batch \
-			/opt/spark/work/batch/jobs/topic_modeling.py
-	@echo "✓ Batch job complete"
+run-batch: ## Trigger the batch_topic_modeling DAG (transcribe → LDA → labels → ClickHouse)
+	docker exec airflow-scheduler airflow dags trigger batch_topic_modeling
+	@echo "✓ Triggered — follow it at http://localhost:8085 (the DAG must be unpaused to run)"

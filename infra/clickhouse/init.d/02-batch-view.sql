@@ -1,13 +1,3 @@
--- ============================================================
--- ClickHouse Batch View — Video Topic Modeling (LDA)
--- Populated by the PySpark batch job.
--- Each run truncates and re-inserts all rows.
---
--- Drop existing tables before re-running init (if schema changed):
---   DROP TABLE IF EXISTS analytics.topic_summary;
---   DROP TABLE IF EXISTS analytics.topic_words;
--- ============================================================
-
 CREATE TABLE IF NOT EXISTS analytics.topic_summary
 (
     run_id           String,

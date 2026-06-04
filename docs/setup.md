@@ -154,7 +154,7 @@ Fetches new comments for all active tracked videos and publishes them to Kafka.
 make poll
 ```
 
-Run these manually or on a schedule. `discover` should run less frequently (e.g. daily); `poll` can run every few minutes.
+`make poll` runs a single polling pass. In the Docker stack, the `comment-poller` service polls continuously (one pass every 30 seconds) and the `discover_channels_daily` Airflow DAG runs discovery once a day.
 
 ### Video downloader
 
@@ -175,7 +175,7 @@ make download-videos
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DOWNLOAD_LOOKBACK_DAYS` | `7` | Days to look back for satisfaction calculation |
+| `DOWNLOAD_LOOKBACK_DAYS` | `1` | Days to look back for satisfaction calculation |
 | `TOP_VIDEOS_TO_DOWNLOAD` | `5` | Number of top videos to download per run |
 | `MIN_COMMENTS_FOR_DOWNLOAD` | `50` | Minimum comments required to qualify |
 | `VIDEO_MAX_HEIGHT` | `720` | Max resolution (e.g. `720`, `1080`, `1440`, `2160`) |
@@ -190,54 +190,52 @@ Browse uploaded videos at **http://localhost:9001** (MinIO Web Console, login: `
 
 ### Batch topic modeling
 
-Transcribes top-satisfaction videos with Whisper and runs LDA topic modeling. Must have run `make download-videos` at least once first.
+Transcribes top-satisfaction videos with Whisper, runs LDA topic modeling and labels the topics with Claude. Needs completed video downloads first.
 
-**One-time: build the custom Spark image** (installs `faster-whisper` and batch dependencies into the Spark worker containers):
+**Build the Spark image** (batch dependencies, the Whisper model, the NLTK wordnet corpus and the job code) and restart the Spark cluster on it:
 
 ```bash
 make build-batch
 ```
 
-This bakes the Whisper `base` model into the image (~150 MB download on first build). Subsequent builds are fast unless `batch/pyproject.toml` changes.
+The job code is baked into the image, so run this again after changing anything under `batch/`. The first build downloads the Whisper model (~150 MB); later builds only redo the layers that changed.
 
-**Run the batch pipeline:**
+**Run the batch pipeline** (triggers the `batch_topic_modeling` Airflow DAG, which also runs weekly once unpaused):
 
 ```bash
 make run-batch
 ```
 
 What it does:
-1. Queries PostgreSQL for all completed downloads
-2. For each video: checks MinIO for a cached transcript — transcribes with Whisper if not found, caches the result
-3. Runs the Spark ML pipeline: tokenize → remove stop words → vectorize → LDA (k=5 topics)
-4. Writes versioned results to ClickHouse: `analytics.video_topics` and `analytics.topic_words`
+1. `transcribe` — transcribes every completed download with Whisper, unless its transcript is already cached in MinIO
+2. `run_lda` — runs the Spark ML pipeline on the cached transcripts: tokenize → remove stop words → lemmatize → vectorize → LDA
+3. `label_and_write` — labels each topic with Claude and replaces `analytics.topic_summary` and `analytics.topic_words` in ClickHouse
 
-Transcription is idempotent — videos already transcribed are skipped on subsequent runs. LDA retrains on the full corpus every run to produce stable topic IDs.
+Transcription is idempotent — videos already transcribed are skipped on subsequent runs. With no downloads, or fewer than 6 transcripts, the remaining tasks are skipped and ClickHouse keeps the previous run.
 
 **Relevant env vars** (in `.env`):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `WHISPER_MODEL` | `base` | Whisper model size: `tiny`, `base`, `small`, `medium` |
-| `LDA_NUM_TOPICS` | `5` | Number of topics for LDA |
-| `LDA_MAX_ITER` | `20` | LDA training iterations |
-| `SPARK_MASTER` | `spark://spark-master:7077` | Spark cluster URL |
+| `WHISPER_MODEL` | `base` | Whisper model baked into the Spark image: `tiny`, `base`, `small`, `medium` (rerun `make build-batch` after changing) |
+| `LDA_MAX_TOPICS` | `20` | Upper bound on the number of LDA topics (about one topic per three videos) |
+| `LDA_MAX_ITER` | `30` | LDA training iterations |
+| `ANTHROPIC_API_KEY` | — | Claude API key for topic labels; without it topics are labeled `Topic N` |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-6` | Claude model used for topic labels |
 
 **Verify results:**
 
 ```bash
 docker exec -it clickhouse clickhouse-client --user admin --password admin --query "
-SELECT run_date, dominant_topic, video_id, satisfaction_pct
-FROM analytics.video_topics
-WHERE run_id = (SELECT run_id FROM analytics.video_topics ORDER BY run_date DESC LIMIT 1)
-ORDER BY dominant_topic, satisfaction_pct DESC;"
+SELECT run_date, topic_id, topic_label, video_count, avg_satisfaction
+FROM analytics.topic_summary
+ORDER BY avg_satisfaction DESC;"
 ```
 
 ```bash
 docker exec -it clickhouse clickhouse-client --user admin --password admin --query "
-SELECT topic_id, word, weight
+SELECT topic_id, topic_label, word, weight
 FROM analytics.topic_words
-WHERE run_id = (SELECT run_id FROM analytics.topic_words ORDER BY run_date DESC LIMIT 1)
 ORDER BY topic_id, weight DESC;"
 ```
 

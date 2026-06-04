@@ -15,15 +15,6 @@ import java.io.FileReader;
 import java.util.HashMap;
 import java.util.Map;
 
-/**
- * Flink RichMapFunction that applies RoBERTa sentiment analysis to each
- * incoming raw comment.
- *
- * The analyzer is initialised once per TaskManager slot in {@code open()} so
- * the ONNX session and HuggingFace tokenizer are not re-created per record.
- * The field is {@code transient} because {@link RobertaSentimentAnalyzer}
- * holds native ONNX Runtime resources that are not Java-serialisable.
- */
 public class SentimentMapFunction extends RichMapFunction<GenericRecord, EnrichedComment> {
     private static final long serialVersionUID = 1L;
 

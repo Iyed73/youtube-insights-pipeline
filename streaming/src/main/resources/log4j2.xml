@@ -15,7 +15,6 @@
         <Logger name="org.apache.kafka" level="WARN" additivity="false">
             <AppenderRef ref="Console"/>
         </Logger>
-        <!-- Suppress DJL verbose model download logs -->
         <Logger name="ai.djl" level="WARN" additivity="false">
             <AppenderRef ref="Console"/>
         </Logger>

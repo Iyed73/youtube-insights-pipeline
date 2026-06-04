@@ -41,9 +41,6 @@
 
     <dependencies>
 
-        <!-- ================================================================
-             Flink core
-             ================================================================ -->
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-streaming-java</artifactId>
@@ -56,18 +53,12 @@
             <version>${flink.version}</version>
         </dependency>
 
-        <!-- ================================================================
-             Flink Kafka connector
-             ================================================================ -->
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-connector-kafka</artifactId>
             <version>${kafka.connector.version}</version>
         </dependency>
 
-        <!-- ================================================================
-             Flink Avro + Confluent Schema Registry serde
-             ================================================================ -->
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-avro</artifactId>
@@ -80,27 +71,18 @@
             <version>${flink.version}</version>
         </dependency>
 
-        <!-- ================================================================
-             Flink JDBC connector (ClickHouse sink)
-             ================================================================ -->
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-connector-jdbc</artifactId>
             <version>${jdbc.connector.version}</version>
         </dependency>
 
-        <!-- ================================================================
-             Apache Avro (Schema.Parser used in the job entry point)
-             ================================================================ -->
         <dependency>
             <groupId>org.apache.avro</groupId>
             <artifactId>avro</artifactId>
             <version>${avro.version}</version>
         </dependency>
 
-        <!-- ================================================================
-             ClickHouse JDBC driver — all-in-one shaded jar
-             ================================================================ -->
         <dependency>
             <groupId>com.clickhouse</groupId>
             <artifactId>clickhouse-jdbc</artifactId>
@@ -115,9 +97,6 @@
             </exclusions>
         </dependency>
 
-        <!-- ================================================================
-             DJL — HuggingFace Rust tokenizer + ONNX Runtime engine
-             ================================================================ -->
         <dependency>
             <groupId>ai.djl</groupId>
             <artifactId>api</artifactId>
@@ -136,25 +115,18 @@
             <version>${djl.version}</version>
         </dependency>
 
-        <!-- Microsoft ONNX Runtime Java API + native binaries -->
         <dependency>
             <groupId>com.microsoft.onnxruntime</groupId>
             <artifactId>onnxruntime</artifactId>
             <version>${onnxruntime.version}</version>
         </dependency>
 
-        <!-- ================================================================
-             Flink metrics — Dropwizard Histogram (mean, p50, p99 …)
-             ================================================================ -->
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-metrics-dropwizard</artifactId>
             <version>${flink.version}</version>
         </dependency>
 
-        <!-- ================================================================
-             Logging — SLF4J API + Log4j 2 backend
-             ================================================================ -->
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
@@ -178,7 +150,6 @@
     <build>
         <plugins>
 
-            <!-- Enforce Java version -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
@@ -189,7 +160,6 @@
                 </configuration>
             </plugin>
 
-            <!-- Fat JAR for cluster submission -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>

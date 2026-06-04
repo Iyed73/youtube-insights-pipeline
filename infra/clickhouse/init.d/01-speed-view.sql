@@ -1,8 +1,3 @@
--- ============================================================
--- ClickHouse Speed View — YouTube Comment Sentiment
--- Populated by the Flink CommentSentimentJob in real time.
--- ============================================================
-
 CREATE DATABASE IF NOT EXISTS analytics;
 
 CREATE TABLE IF NOT EXISTS analytics.comments
