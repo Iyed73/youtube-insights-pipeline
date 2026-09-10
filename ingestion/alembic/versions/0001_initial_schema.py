@@ -1,10 +1,4 @@
-"""Initial schema: tracked_videos table.
-
-Revision ID: 0001
-Revises:
-Create Date: 2026-04-26 00:00:00.000000
-
-"""
+"""Initial schema: tracked_videos table."""
 from __future__ import annotations
 
 from typing import Sequence, Union
@@ -13,7 +7,6 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import TIMESTAMP as PgTIMESTAMP
 
-# revision identifiers, used by Alembic.
 revision: str = "0001"
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None

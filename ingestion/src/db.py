@@ -1,10 +1,3 @@
-"""PostgreSQL helpers for ingestion state management.
-
-All functions accept an open SQLAlchemy ``Session`` and are intentionally
-kept as thin wrappers around ORM operations so callers stay in full control
-of transaction boundaries.
-"""
-
 from __future__ import annotations
 
 import os
@@ -35,17 +28,10 @@ def _get_engine() -> Engine:
 
 
 def get_session() -> Session:
-    """Open and return a new SQLAlchemy session to the ingestion database."""
     return Session(_get_engine())
 
 
-# ---------------------------------------------------------------------------
-# channel_discovery helpers
-# ---------------------------------------------------------------------------
-
-
 def get_active_videos_for_channel(session: Session, channel_id: str) -> list[TrackedVideo]:
-    """Return all active tracked videos for *channel_id*, ordered oldest first."""
     return list(
         session.execute(
             select(TrackedVideo)
@@ -59,7 +45,6 @@ def get_active_videos_for_channel(session: Session, channel_id: str) -> list[Tra
 
 
 def mark_videos_removed(session: Session, video_ids: list[str]) -> None:
-    """Mark multiple videos as removed in one statement."""
     if not video_ids:
         return
     session.execute(
@@ -80,7 +65,6 @@ def insert_tracked_video(
     view_count: int,
     published_at: datetime,
 ) -> None:
-    """Insert a new tracked video, or re-activate it if it was previously removed."""
     stmt = (
         pg_insert(TrackedVideo)
         .values(
@@ -100,13 +84,7 @@ def insert_tracked_video(
     session.commit()
 
 
-# ---------------------------------------------------------------------------
-# comment_poller helpers
-# ---------------------------------------------------------------------------
-
-
 def get_active_videos(session: Session) -> list[TrackedVideo]:
-    """Return all active tracked videos, ordered so the longest-unpolled come first."""
     return list(
         session.execute(
             select(TrackedVideo)
@@ -123,13 +101,6 @@ def update_video_poll(
     last_comment_at: datetime | None = None,
     comment_cursor: datetime | None = None,
 ) -> None:
-    """Advance the poll cursor for *video_id*.
-
-    *last_comment_at* — wall-clock time when new comments were last found
-                        (used by the eviction check).
-    *comment_cursor*  — published_at of the newest comment seen so far
-                        (used as the cutoff on the next poll).
-    """
     values: dict = {"last_polled_at": last_polled_at}
     if last_comment_at is not None:
         values["last_comment_at"] = last_comment_at
@@ -142,7 +113,6 @@ def update_video_poll(
 
 
 def mark_video_removed(session: Session, video_id: str) -> None:
-    """Mark *video_id* as removed so comment_poller stops polling it."""
     session.execute(
         update(TrackedVideo)
         .where(TrackedVideo.video_id == video_id)
@@ -151,13 +121,7 @@ def mark_video_removed(session: Session, video_id: str) -> None:
     session.commit()
 
 
-# ---------------------------------------------------------------------------
-# video_downloader helpers
-# ---------------------------------------------------------------------------
-
-
 def is_video_downloaded(session: Session, video_id: str) -> bool:
-    """Return True if *video_id* has already been successfully downloaded."""
     row = session.execute(
         select(DownloadedVideo)
         .where(DownloadedVideo.video_id == video_id, DownloadedVideo.status == "completed")
@@ -176,7 +140,6 @@ def upsert_downloaded_video(
     status: str,
     error: str | None = None,
 ) -> None:
-    """Insert or update a row in downloaded_videos."""
     stmt = (
         pg_insert(DownloadedVideo)
         .values(

@@ -3,7 +3,10 @@ name = "youtube-insights-orchestration"
 version = "0.1.0"
 description = "Airflow DAGs and plugins for pipeline orchestration"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "apache-airflow>=2.9.0",
+    "apache-airflow-providers-docker>=3.10.0",
+]
 
 [tool.ruff]
 line-length = 100
@@ -14,4 +17,4 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 ignore = []
 
 [tool.ruff.lint.isort]
-known-first-party = ["dags", "plugins"]
+known-first-party = ["dags", "plugins", "common"]

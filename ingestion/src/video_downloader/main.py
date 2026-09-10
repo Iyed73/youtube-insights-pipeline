@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 from dataclasses import dataclass
@@ -10,27 +11,32 @@ import requests
 import yt_dlp
 from minio import Minio
 
+
+class _QuietLogger:
+    def debug(self, msg): pass
+    def info(self, msg): pass
+    def warning(self, msg): pass
+    def error(self, msg): logging.error(msg)
+
 import db
 from models import TrackedVideo
 
 
 @dataclass
 class Config:
-    # ClickHouse
     clickhouse_host: str
     clickhouse_http_port: int
     clickhouse_user: str
     clickhouse_password: str
-    # MinIO
     minio_endpoint: str
     minio_access_key: str
     minio_secret_key: str
     minio_bucket: str
-    # Downloader knobs
     lookback_days: int
     top_n: int
     min_comments: int
     max_height: int
+    max_duration_sec: int
 
 
 def _cfg() -> Config:
@@ -47,6 +53,7 @@ def _cfg() -> Config:
         top_n=int(os.environ.get("TOP_VIDEOS_TO_DOWNLOAD", "5")),
         min_comments=int(os.environ.get("MIN_COMMENTS_FOR_DOWNLOAD", "50")),
         max_height=int(os.environ.get("VIDEO_MAX_HEIGHT", "720")),
+        max_duration_sec=int(os.environ.get("VIDEO_MAX_DURATION_SEC", "600")),
     )
 
 
@@ -59,7 +66,6 @@ class VideoCandidate:
 
 
 def fetch_top_videos(cfg: Config) -> list[VideoCandidate]:
-    """Query ClickHouse for videos ranked by positive-sentiment percentage."""
     query = f"""
         SELECT
             video_id,
@@ -100,7 +106,6 @@ def fetch_top_videos(cfg: Config) -> list[VideoCandidate]:
 
 
 def get_video_title(session, video_id: str) -> str:
-    """Look up the video title from the ingestion database."""
     from sqlalchemy import select
 
     row = session.execute(
@@ -126,7 +131,6 @@ def download_and_upload(
     cfg: Config,
     minio_client: Minio,
 ) -> str:
-    """Download video with yt-dlp, upload to MinIO, return the MinIO object path."""
     minio_path = f"{channel_id}/{video_id}.mp4"
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -135,14 +139,16 @@ def download_and_upload(
             "format": f"bestvideo[ext=mp4][height<={cfg.max_height}]+bestaudio[ext=m4a]/best[ext=mp4][height<={cfg.max_height}]/best",
             "outtmpl": out_path,
             "merge_output_format": "mp4",
-            "quiet": True,
-            "no_warnings": True,
+            "logger": _QuietLogger(),
+            "noprogress": True,
             "progress_hooks": [_ydl_progress_hook],
+            "download_ranges": yt_dlp.utils.download_range_func(None, [(0, cfg.max_duration_sec)]),
+            "force_keyframes_at_cuts": True,
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
 
-        # yt-dlp may append .mp4 if merging — find the actual file
+        # yt-dlp may append .mp4 when merging, so the output name can differ.
         candidates = list(Path(tmpdir).glob(f"{video_id}*.mp4"))
         if not candidates:
             raise FileNotFoundError(f"yt-dlp produced no mp4 file in {tmpdir}")
@@ -170,7 +176,6 @@ def main() -> None:
         secret_key=cfg.minio_secret_key,
         secure=False,
     )
-    # Ensure bucket exists
     if not minio_client.bucket_exists(cfg.minio_bucket):
         minio_client.make_bucket(cfg.minio_bucket)
 

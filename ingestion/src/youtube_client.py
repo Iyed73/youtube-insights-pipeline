@@ -1,10 +1,3 @@
-"""Centralised YouTube Data API v3 client.
-
-Uses the uploads-playlist approach for video discovery (quota cost ≈ 3 units
-per channel) rather than ``search.list`` (100 units) to stay well within the
-free daily quota of 10 000 units.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -29,15 +22,9 @@ def _to_ms(dt: datetime) -> int:
 
 
 class YouTubeClient:
-    """Thin, typed wrapper around the YouTube Data API v3."""
-
     def __init__(self, api_key: str) -> None:
         # cache_discovery=False avoids writing a local file in read-only envs.
         self._yt = build("youtube", "v3", developerKey=api_key, cache_discovery=False)
-
-    # ------------------------------------------------------------------
-    # Channel video discovery
-    # ------------------------------------------------------------------
 
     def get_channel_videos(
         self,
@@ -45,11 +32,7 @@ class YouTubeClient:
         published_after: datetime,
         max_results: int = 50,
     ) -> list[Video]:
-        """Return videos from *channel_id* published after *published_after*.
-
-        Pagination stops as soon as we reach the lookback boundary or
-        accumulate *max_results* video IDs, whichever comes first.
-        """
+        # The uploads playlist costs ~3 quota units per channel; search.list costs 100.
         uploads_id = self._get_uploads_playlist_id(channel_id)
         if uploads_id is None:
             return []
@@ -74,7 +57,6 @@ class YouTubeClient:
         published_after: datetime,
         max_results: int,
     ) -> list[str]:
-        """Page through the uploads playlist and return video IDs within the window."""
         cutoff_str = published_after.strftime(_ISO_FMT)
         video_ids: list[str] = []
         next_page_token: str | None = None
@@ -107,7 +89,6 @@ class YouTubeClient:
         return video_ids
 
     def _fetch_video_details(self, channel_id: str, video_ids: list[str]) -> list[Video]:
-        """Batch-fetch snippet + statistics for a list of video IDs."""
         videos: list[Video] = []
         for i in range(0, len(video_ids), 50):
             chunk = video_ids[i : i + 50]
@@ -128,24 +109,12 @@ class YouTubeClient:
                 )
         return videos
 
-    # ------------------------------------------------------------------
-    # Comment polling
-    # ------------------------------------------------------------------
-
     def get_comment_threads(
         self,
         video_id: str,
         page_token: str | None = None,
         max_results: int = 100,
     ) -> tuple[list[Comment], str | None]:
-        """Return one page of top-level comments for *video_id*.
-
-        Comments are ordered by time (newest first).  Pass the returned
-        ``next_page_token`` on subsequent calls to page forward through
-        older comments.
-
-        Returns ``([], None)`` if comments are disabled on the video.
-        """
         try:
             resp = (
                 self._yt.commentThreads()

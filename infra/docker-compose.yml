@@ -1,50 +1,44 @@
-# YouTube Trend Analysis Pipeline — Local Development Infrastructure
-#
-# Start everything:  docker compose -f infra/docker-compose.yml up -d
-# Tear down:         docker compose -f infra/docker-compose.yml down -v
-#
-# Service port map (host → container):
-#   8080  Kafka UI
-#   8081  Schema Registry
-#   8082  Flink Web UI
-#   8083  Spark Master Web UI
-#   8085  Airflow Web UI
-#   8123  ClickHouse HTTP
-#   9000  ClickHouse Native TCP
-#   9001  MinIO Web Console
-#   9002  MinIO S3 API
-#   9092  Kafka (internal — for Dockerised services)
-#   9094  Kafka (external — for services running directly on the host)
-#   5432  PostgreSQL
-
-version: "3.8"
-
-# ── Shared Airflow config (reused across webserver, scheduler, init) ─────────
 x-airflow-common: &airflow-common
-  image: apache/airflow:2.9.0
-  environment: &airflow-common-env
+  image: youtube-insights/airflow:latest
+  build:
+    context: ..
+    dockerfile: infra/airflow/Dockerfile
+  environment:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres/${AIRFLOW_DB:-airflow}
     AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
+    # Forwarded by the DAGs into their task containers (orchestration/dags/common/containers.py).
+    POSTGRES_USER: ${POSTGRES_USER:-airflow}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
+    INGESTION_DB: ${INGESTION_DB:-ingestion}
+    MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+    MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+    MINIO_VIDEOS_BUCKET: ${MINIO_VIDEOS_BUCKET:-videos}
+    CLICKHOUSE_USER: ${CLICKHOUSE_USER:-admin}
+    CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-admin}
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
+    # Forwarded only when set in .env; otherwise the jobs' defaults apply.
+    ANTHROPIC_MODEL:
+    LDA_MAX_TOPICS:
+    LDA_MAX_ITER:
+    DOWNLOAD_LOOKBACK_DAYS:
+    TOP_VIDEOS_TO_DOWNLOAD:
+    MIN_COMMENTS_FOR_DOWNLOAD:
   volumes:
-    - ../orchestration/dags:/opt/airflow/dags      # DAG definitions
-    - ../orchestration/plugins:/opt/airflow/plugins # Custom Airflow plugins
+    - ../orchestration/dags:/opt/airflow/dags
+    - ../orchestration/plugins:/opt/airflow/plugins
     - airflow-logs:/opt/airflow/logs
+    - /var/run/docker.sock:/var/run/docker.sock
   depends_on:
     postgres:
       condition: service_healthy
 
 services:
 
-  # ── Kafka (KRaft mode — no ZooKeeper required) ────────────────────────────
-  # Central message broker.  The ingestion service publishes raw comments here;
-  # Flink consumes them for stream processing.
-  # Two listeners:
-  #   PLAINTEXT://kafka:9092    used by Dockerised services (Flink, Schema Registry)
-  #   EXTERNAL://localhost:9094 used when running ingestion directly on the host
   kafka:
     container_name: kafka
     image: apache/kafka-native:3.9.0
@@ -61,11 +55,9 @@ services:
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
-      # Single-broker dev defaults
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      # Pre-generated cluster ID for KRaft (any valid base64-encoded UUID works)
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
     healthcheck:
       test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9092' 2>/dev/null"]
@@ -74,10 +66,6 @@ services:
       retries: 20
       start_period: 10s
 
-  # ── Schema Registry (Apicurio) ────────────────────────────────────────────
-  # Apicurio Registry — open-source, Confluent-API-compatible schema registry.
-  # Exposes its REST API on container port 8080, mapped to host port 8081.
-  # Schemas are stored inside a Kafka topic (kafkasql storage), so no extra DB.
   schema-registry:
     container_name: schema-registry
     image: apicurio/apicurio-registry:latest
@@ -96,9 +84,6 @@ services:
       retries: 10
       start_period: 15s
 
-  # ── Kafka UI ──────────────────────────────────────────────────────────────
-  # Browser-based UI to inspect Kafka topics, browse messages, manage consumer
-  # groups, and view registered Avro schemas — essential for local debugging.
   kafka-ui:
     container_name: kafka-ui
     image: ghcr.io/kafbat/kafka-ui:latest
@@ -113,22 +98,18 @@ services:
       KAFKA_CLUSTERS_0_DEFAULTKEYSERDE: String
       KAFKA_CLUSTERS_0_DEFAULTVALUESERDE: SchemaRegistry
 
-  # ── Flink JobManager ─────────────────────────────────────────────────────
-  # Flink cluster coordinator: accepts job submissions, distributes tasks to
-  # TaskManagers, and serves the Flink Web UI (real-time job monitoring).
-  # Runs the sentiment-analysis streaming job against the raw-comments topic.
   flink-jobmanager:
     container_name: flink-jobmanager
     image: flink:1.18-java11
     ports:
-      - "8082:8081"   # Flink Web UI
+      - "8082:8081"
     command: jobmanager
     environment:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
         rest.bind-address: 0.0.0.0
     volumes:
-      - ../models:/opt/flink/models:ro   # ONNX model (exported via optimum-cli)
+      - ../models:/opt/flink/models:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/overview"]
       interval: 10s
@@ -136,9 +117,6 @@ services:
       retries: 10
       start_period: 15s
 
-  # ── Flink TaskManager ─────────────────────────────────────────────────────
-  # Flink worker: executes streaming operators (comment parsing, sentiment
-  # scoring, windowed aggregations) and writes results to ClickHouse.
   flink-taskmanager:
     container_name: flink-taskmanager
     image: flink:1.18-java11
@@ -151,7 +129,6 @@ services:
         jobmanager.rpc.address: flink-jobmanager
         taskmanager.numberOfTaskSlots: 2
         classloader.parent-first-patterns.additional: ai.djl;ai.onnxruntime
-      # Read by CommentSentimentJob at runtime
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SCHEMA_REGISTRY_URL: http://schema-registry:8080/apis/ccompat/v7
       CLICKHOUSE_URL: jdbc:clickhouse://clickhouse:8123/analytics
@@ -161,29 +138,34 @@ services:
       FLINK_PARALLELISM: ${FLINK_PARALLELISM:-2}
       OMP_NUM_THREADS: ${OMP_NUM_THREADS:-2}
     volumes:
-      - ../models:/opt/flink/models:ro   # ONNX model (exported via optimum-cli)
-      - ../config:/opt/flink/config:ro   # channels.yaml and other pipeline config
+      - ../models:/opt/flink/models:ro
+      - ../config:/opt/flink/config:ro
 
-  # ── Spark Master ──────────────────────────────────────────────────────────
-  # Spark cluster coordinator: accepts PySpark job submissions from Airflow
-  # DAGs and distributes work to Spark Workers for batch aggregations
-  # (per-channel totals, tracked-video counts, historical trend rollups).
   spark-master:
     container_name: spark-master
-    image: apache/spark:3.5.7
+    # Also the image of the batch_topic_modeling DAG's task containers.
+    image: youtube-insights/spark:latest
+    build:
+      context: ..
+      dockerfile: infra/spark/Dockerfile
+      args:
+        - WHISPER_MODEL
     ports:
-      - "7077:7077"   # spark-submit endpoint
-      - "8083:8080"   # Spark Master Web UI
+      - "7077:7077"
+      - "8083:8080"
     command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
 
-  # ── Spark Worker ─────────────────────────────────────────────────────────
-  # Spark executor: processes PySpark tasks assigned by the master and writes
-  # aggregated results to ClickHouse for dashboard consumption.
   spark-worker:
-    container_name: spark-worker
-    image: apache/spark:3.5.7
+    image: youtube-insights/spark:latest
+    build:
+      context: ..
+      dockerfile: infra/spark/Dockerfile
+      args:
+        - WHISPER_MODEL
     depends_on:
       - spark-master
+    environment:
+      SPARK_WORKER_DIR: /tmp/spark-worker
     command:
       - /opt/spark/bin/spark-class
       - org.apache.spark.deploy.worker.Worker
@@ -193,11 +175,6 @@ services:
       - "2"
       - spark://spark-master:7077
 
-  # ── PostgreSQL ────────────────────────────────────────────────────────────
-  # Relational store serving two purposes:
-  #   1. airflow DB   — Airflow metadata (DAG runs, task states, XComs)
-  #   2. ingestion DB — ingestion state (which videos are tracked per channel,
-  #                     last-seen comment timestamp for the inactivity rule)
   postgres:
     container_name: postgres
     image: postgres:16
@@ -206,7 +183,7 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-airflow}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
-      POSTGRES_DB: ${AIRFLOW_DB:-airflow}   # Airflow metadata DB (auto-created)
+      POSTGRES_DB: ${AIRFLOW_DB:-airflow}
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -216,24 +193,19 @@ services:
       timeout: 5s
       retries: 10
 
-  # ── ClickHouse ────────────────────────────────────────────────────────────
-  # Columnar analytics database — the unified sink for both pipeline views:
-  #   Speed view  : Flink writes real-time sentiment scores per video/channel
-  #   Batch view  : Spark writes scheduled aggregations (comment counts, etc.)
-  # Powers any analytics dashboard or ad-hoc query layer on top of the pipeline.
   clickhouse:
     container_name: clickhouse
     image: clickhouse/clickhouse-server:24.3
     ports:
-      - "8123:8123"   # HTTP interface  (dashboards, curl, DBeaver)
-      - "9000:9000"   # Native TCP      (Flink & Spark ClickHouse connectors)
+      - "8123:8123"
+      - "9000:9000"
     environment:
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-admin}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-admin}
       CLICKHOUSE_DB: analytics
     volumes:
       - clickhouse-data:/var/lib/clickhouse
-      - ./clickhouse/init.d:/docker-entrypoint-initdb.d:ro  # speed-view schema
+      - ./clickhouse/init.d:/docker-entrypoint-initdb.d:ro
     ulimits:
       nproc: 65535
       nofile:
@@ -245,9 +217,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── Airflow Init ──────────────────────────────────────────────────────────
-  # One-shot bootstrap container: runs DB migrations and creates the default
-  # admin user on first start, then exits with code 0.
   airflow-init:
     container_name: airflow-init
     <<: *airflow-common
@@ -265,10 +234,6 @@ services:
           --email admin@example.com || true
     restart: "no"
 
-  # ── Airflow Webserver ─────────────────────────────────────────────────────
-  # Airflow UI: browse DAGs, trigger runs manually, inspect task logs.
-  # Handles ingestion scheduling (video-list refresh, comment polling) and
-  # Spark batch job submission.
   airflow-webserver:
     container_name: airflow-webserver
     <<: *airflow-common
@@ -278,15 +243,16 @@ services:
       airflow-init:
         condition: service_completed_successfully
     ports:
-      - "8085:8080"   # Airflow Web UI
+      - "8085:8080"
     command: webserver
 
-  # ── Airflow Scheduler ─────────────────────────────────────────────────────
-  # Airflow brain: evaluates cron schedules and dispatches tasks via
-  # LocalExecutor (no separate Celery workers needed for local development).
   airflow-scheduler:
     container_name: airflow-scheduler
     <<: *airflow-common
+    # Grants the airflow user access to the Docker socket for DockerOperator.
+    # DOCKER_GID must match `stat -c '%g' /var/run/docker.sock` on the host.
+    group_add:
+      - "${DOCKER_GID:-969}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -294,17 +260,13 @@ services:
         condition: service_completed_successfully
     command: scheduler
 
-  # ── MinIO ─────────────────────────────────────────────────────────────────
-  # S3-compatible object store used as the landing zone for downloaded videos.
-  # Spark batch jobs read video files directly from MinIO via the S3A connector.
-  # S3 API is mapped to host port 9002 (9000 is taken by ClickHouse native TCP).
   minio:
     container_name: minio
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     ports:
-      - "9002:9000"   # S3 API (use localhost:9002 from host, minio:9000 inside Docker)
-      - "9001:9001"   # MinIO Web Console
+      - "9002:9000"
+      - "9001:9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
@@ -317,8 +279,59 @@ services:
       retries: 5
       start_period: 10s
 
+  comment-poller:
+    container_name: comment-poller
+    image: youtube-insights/ingestion:latest
+    build:
+      context: ..
+      dockerfile: infra/ingestion/Dockerfile
+    command: ["python3", "-m", "comment_poller.main", "--interval", "30"]
+    restart: unless-stopped
+    # Room to finish the pass in progress on shutdown (see comment_poller/main.py).
+    stop_grace_period: 2m
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    environment:
+      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-airflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
+      INGESTION_DB: ${INGESTION_DB:-ingestion}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SCHEMA_REGISTRY_URL: http://schema-registry:8080/apis/ccompat/v7
+      MAX_COMMENTS_PER_POLL:
+      COMMENT_INACTIVITY_HOURS:
+
+  grafana:
+    container_name: grafana
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_INSTALL_PLUGINS=grafana-clickhouse-datasource
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+      - GF_USERS_DEFAULT_THEME=light
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
 volumes:
-  postgres-data:     # Airflow metadata + ingestion tracking state
-  clickhouse-data:   # Speed-view sentiment scores + batch aggregation results
-  airflow-logs:      # Airflow task execution logs
-  minio-data:        # Downloaded video files for Spark batch processing
+  postgres-data:
+  clickhouse-data:
+  airflow-logs:
+  minio-data:
+
+networks:
+  default:
+    # Must match DOCKER_NETWORK in orchestration/dags/common/containers.py.
+    name: youtube-insights

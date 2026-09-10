@@ -1,0 +1,331 @@
+{
+  "title": "YouTube Net Sentiment Speed View",
+  "refresh": "5s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "grafana-clickhouse-datasource"
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "sqleditor",
+          "format": "table",
+          "rawSql": "SELECT count() AS value FROM analytics.comments WHERE $__timeFilter(published_at)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "displayName": "Total Comments",
+          "color": { "mode": "fixed", "fixedColor": "text" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "text", "value": null }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "grafana-clickhouse-datasource"
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "sqleditor",
+          "format": "table",
+          "rawSql": "SELECT uniqExact(channel_name) AS value FROM analytics.comments WHERE $__timeFilter(published_at)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "displayName": "Channels",
+          "color": { "mode": "fixed", "fixedColor": "text" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "text", "value": null }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "grafana-clickhouse-datasource"
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "sqleditor",
+          "format": "table",
+          "rawSql": "SELECT round((countIf(sentiment = 'Positive') - countIf(sentiment = 'Negative')) / count(), 3) AS value FROM analytics.comments WHERE $__timeFilter(published_at)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "displayName": "Avg Net Sentiment",
+          "unit": "percentunit",
+          "decimals": 1,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0 },
+              { "color": "green", "value": 0.2 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "type": "bargauge",
+      "title": "Net Sentiment by Channel",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "grafana-clickhouse-datasource"
+      },
+      "gridPos": { "h": 10, "w": 10, "x": 0, "y": 4 },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "sqleditor",
+          "format": "table",
+          "rawSql": "SELECT\n    channel_name,\n    if(count() > 0,\n       (countIf(sentiment = 'Positive') - countIf(sentiment = 'Negative')) / count(),\n       0) AS net_sentiment\nFROM analytics.comments\nWHERE $__timeFilter(published_at)\nGROUP BY channel_name\nORDER BY net_sentiment DESC"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "min": -1,
+          "max": 1,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0 },
+              { "color": "green", "value": 0.2 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "showUnfilled": true,
+        "minVizWidth": 8,
+        "minVizHeight": 16,
+        "namePlacement": "auto",
+        "valueMode": "text"
+      },
+      "transformations": [
+        {
+          "id": "rowsToFields",
+          "options": {
+            "mappings": [
+              { "fieldName": "channel_name", "handlerKey": "field.name" },
+              { "fieldName": "net_sentiment", "handlerKey": "field.value" }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Channel Net Sentiment Details",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "grafana-clickhouse-datasource"
+      },
+      "gridPos": { "h": 10, "w": 14, "x": 10, "y": 4 },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "sqleditor",
+          "format": "table",
+          "rawSql": "SELECT\n    channel_name,\n    count() AS total_comments,\n    countIf(sentiment = 'Positive') AS total_positive,\n    countIf(sentiment = 'Negative') AS total_negative,\n    countIf(sentiment = 'Neutral') AS total_neutral,\n    if(total_comments > 0, \n       (total_positive - total_negative) / total_comments, \n       0) AS net_sentiment_score\nFROM analytics.comments\nWHERE $__timeFilter(published_at)\nGROUP BY channel_name\nORDER BY total_comments DESC"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "inspect": false
+          },
+          "mappings": [],
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0 },
+              { "color": "green", "value": 0.2 }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "channel_name" },
+            "properties": [
+              { "id": "displayName", "value": "Channel" },
+              { "id": "custom.width", "value": 200 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "total_comments" },
+            "properties": [
+              { "id": "displayName", "value": "Comments" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "total_neutral" },
+            "properties": [
+              { "id": "displayName", "value": "Neutral" },
+              { "id": "custom.cellOptions", "value": { "type": "color-text" } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "text" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "net_sentiment_score" },
+            "properties": [
+              { "id": "displayName", "value": "Net Sentiment" },
+              { "id": "custom.cellOptions", "value": {
+                "type": "gauge",
+                "mode": "gradient",
+                "valueDisplayMode": "text"
+              }},
+              { "id": "unit", "value": "percentunit" },
+              { "id": "decimals", "value": 1 },
+              { "id": "min", "value": -1 },
+              { "id": "max", "value": 1 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "total_positive" },
+            "properties": [
+              { "id": "displayName", "value": "Positive" },
+              { "id": "custom.cellOptions", "value": { "type": "color-text" } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "total_negative" },
+            "properties": [
+              { "id": "displayName", "value": "Negative" },
+              { "id": "custom.cellOptions", "value": { "type": "color-text" } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "md",
+        "footer": { "show": false }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Sentiment Trend",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "grafana-clickhouse-datasource"
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "sqleditor",
+          "format": "timeseries",
+          "rawSql": "SELECT\n    toStartOfInterval(published_at, INTERVAL 5 MINUTE) AS time,\n    countIf(sentiment = 'Positive') AS Positive,\n    countIf(sentiment = 'Neutral') AS Neutral,\n    countIf(sentiment = 'Negative') AS Negative\nFROM analytics.comments\nWHERE $__timeFilter(published_at)\nGROUP BY time\nORDER BY time"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "gradientMode": "opacity",
+            "pointSize": 4,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": { "mode": "none" }
+          },
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Positive" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Neutral" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "text" } },
+              { "id": "custom.fillOpacity", "value": 5 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Negative" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      }
+    }
+  ],
+  "schemaVersion": 30
+}

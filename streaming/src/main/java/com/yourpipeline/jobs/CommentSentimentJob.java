@@ -17,19 +17,9 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 
 import java.sql.Timestamp;
 
-/**
- * Entry point for the YouTube comment sentiment streaming job.
- *
- * Pipeline:
- *   raw-comments (Kafka / Avro)
- *     → SentimentMapFunction  (RoBERTa via DJL + ONNX Runtime)
- *     → JdbcSink              (ClickHouse — comments table)
- */
 public class CommentSentimentJob {
 
-    // Inline Avro schema — mirrors schemas/raw-comments.avsc exactly so the
-    // ConfluentRegistryAvroDeserializationSchema can resolve the writer schema
-    // from the registry and produce compatible GenericRecord objects.
+    // Must mirror schemas/raw-comments.avsc.
     private static final String RAW_COMMENT_SCHEMA =
         "{\"type\":\"record\",\"name\":\"RawComment\",\"namespace\":\"com.yourpipeline\"," +
         "\"fields\":[" +
@@ -75,7 +65,7 @@ public class CommentSentimentJob {
 
         StreamExecutionEnvironment streamEnv = StreamExecutionEnvironment.getExecutionEnvironment();
         streamEnv.setParallelism(parallelism);
-        streamEnv.enableCheckpointing(30_000); // checkpoint every 30 s
+        streamEnv.enableCheckpointing(30_000);
 
         DataStream<GenericRecord> comments = streamEnv.fromSource(
                 kafkaSource,

@@ -2,10 +2,6 @@ package com.yourpipeline.model;
 
 import java.io.Serializable;
 
-/**
- * A raw comment enriched with a RoBERTa sentiment label.
- * Written to the ClickHouse analytics.comments table via the Flink JDBC sink.
- */
 public class EnrichedComment implements Serializable {
     private static final long serialVersionUID = 1L;
 

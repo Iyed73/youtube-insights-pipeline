@@ -1,0 +1,9 @@
+.git
+.env
+.idea
+.ruff_cache
+**/.venv
+**/__pycache__
+**/*.pyc
+models
+streaming/target
